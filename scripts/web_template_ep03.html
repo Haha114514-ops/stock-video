@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html,body { width:1080px; height:1920px; overflow:hidden; background:#F2ECE2; }
+  body { font-family:"Microsoft YaHei",sans-serif; }
+  #stage { position:relative; width:1080px; height:1920px; background:#F2ECE2; }
+  .serif { font-family:"SimSun","Microsoft YaHei",serif; }
+
+  #hdr { position:absolute; top:34px; left:86px; font-size:23px; font-weight:700;
+         color:#8A8172; z-index:10; }
+  .tag { position:absolute; top:34px; right:86px; font-size:23px; font-weight:700;
+         color:#B8860B; z-index:10; }
+  #prog { position:absolute; left:86px; bottom:84px; width:622px; height:5px;
+          background:#DCD4C6; z-index:10; }
+  #barfill { width:0%; height:100%; background:#B8860B; }
+  .foot { position:absolute; right:86px; bottom:74px; font-size:18px;
+          color:#8A8172; z-index:10; }
+
+  .sec { position:absolute; inset:0; opacity:0; }
+  .el { position:absolute; transform:translateY(-50%); white-space:pre-line; }
+
+  /* ---------- S1 钩子 ---------- */
+  #s1 .h1 { top:22%;  left:8%; font-size:110px; color:#26221C; }
+  #s1 .h2 { top:33%;  left:8%; font-size:62px;  color:#26221C; }
+  #s1 .mid { top:46%; left:8%; font-size:68px;  color:#B8860B; }
+  #s1 .twist1 { top:60%; left:8%; font-size:34px; color:#4A443A; }
+  #s1 .twist2 { top:68%; left:8%; font-size:54px; color:#C74334; }
+  #s1 .end { top:80%; left:8%; font-size:56px; color:#B8860B; }
+
+  /* ---------- S2 是什么 ---------- */
+  #s2 .title{ top:12.5%; left:8%; font-size:74px; color:#B8860B; }
+  #s2 .l1 { top:26%; left:8%; font-size:40px; color:#4A443A; }
+  #s2 .l2 { top:35%; left:8%; font-size:68px; color:#B8860B; }
+  #s2 .l3 { top:46%; left:8%; font-size:34px; color:#4A443A; }
+  #s2 .hero{ top:60%; left:8%; font-size:66px; color:#26221C; }
+  #s2 .note{ top:71%; left:8%; font-size:30px; color:#8A8172; }
+
+  /* ---------- S3 行业构成（条形生长） ---------- */
+  #s3 .title{ top:12.5%; left:8%; font-size:66px; color:#B8860B; }
+  #s3 .n1,#s3 .n2,#s3 .n3,#s3 .n4,#s3 .n5,#s3 .n6 { position:absolute; inset:0; }
+  #s3 .name { left:8%; font-size:28px; color:#4A443A; }
+  #s3 .bar  { left:26%; height:34px; }
+  #s3 .pct  { font-size:30px; font-weight:700; color:#26221C; }
+  #s3 .b1{ width:52%; background:#B8860B; } #s3 .p1{ left:79.5%; }
+  #s3 .b2{ width:50%; background:#3D5A80; } #s3 .p2{ left:77.5%; }
+  #s3 .b3{ width:38%; background:#3F7A54; } #s3 .p3{ left:65.5%; }
+  #s3 .b4{ width:24%; background:#26221C; } #s3 .p4{ left:51.5%; }
+  #s3 .b5{ width:22%; background:#8A8172; } #s3 .p5{ left:49.5%; }
+  #s3 .b6{ width:16%; background:#B0A793; } #s3 .p6{ left:43.5%; }
+  #s3 .n1 .name,#s3 .n1 .bar,#s3 .n1 .pct{ top:22%; }
+  #s3 .n2 .name,#s3 .n2 .bar,#s3 .n2 .pct{ top:30.5%; }
+  #s3 .n3 .name,#s3 .n3 .bar,#s3 .n3 .pct{ top:39%; }
+  #s3 .n4 .name,#s3 .n4 .bar,#s3 .n4 .pct{ top:47.5%; }
+  #s3 .n5 .name,#s3 .n5 .bar,#s3 .n5 .pct{ top:56%; }
+  #s3 .n6 .name,#s3 .n6 .bar,#s3 .n6 .pct{ top:64.5%; }
+  #s3 .twist{ top:75%; left:8%; font-size:58px; font-weight:700; color:#C74334; }
+  #s3 .sub { top:83%; left:8%; font-size:30px; color:#8A8172; }
+
+  /* ---------- S4 前十大权重股 ---------- */
+  #s4 .title{ top:12.5%; left:8%; font-size:66px; color:#B8860B; }
+  #s4 .k { left:8%; font-size:36px; color:#4A443A; }
+  #s4 .k1{ top:20%; } #s4 .k2{ top:24.8%; } #s4 .k3{ top:29.6%; }
+  #s4 .k4{ top:34.4%; } #s4 .k5{ top:39.2%; } #s4 .k6{ top:44%; }
+  #s4 .k7{ top:48.8%; font-size:36px; color:#8A8172; }
+  #s4 .big { top:56%; left:8%; font-size:76px; color:#26221C; }
+  #s4 .uline{ top:61.5%; left:8%; width:34%; height:6px; background:#B8860B; }
+  #s4 .sub { top:66%; left:8%; font-size:32px; color:#4A443A; }
+  #s4 .fact2{ top:75%; left:8%; font-size:46px; color:#C74334; }
+
+  /* ---------- S5 vs 上证 ---------- */
+  #s5 .title{ top:12.5%; left:8%; font-size:62px; color:#B8860B; }
+  #s5 .c1 { top:22%; left:8%; font-size:46px; color:#3D5A80; }
+  #s5 .c1d{ top:29%; left:8%; font-size:30px; color:#4A443A; line-height:1.7; }
+  #s5 .sep{ top:43%; left:8%; width:84%; height:1px; background:#D8D0C0; }
+  #s5 .c2 { top:49%; left:8%; font-size:46px; color:#B8860B; }
+  #s5 .c2d{ top:56%; left:8%; font-size:30px; color:#4A443A; line-height:1.7; }
+  #s5 .punch{ top:70%; left:8%; font-size:56px; color:#26221C; }
+
+  /* ---------- S6 怎么买 ---------- */
+  #s6 .title{ top:12.5%; left:8%; font-size:62px; color:#B8860B; }
+  #s6 .code { top:30%; left:8%; font-size:110px; color:#B8860B; }
+  #s6 .label{ top:41%; left:8%; font-size:36px; color:#26221C; }
+  #s6 .note { top:52%; left:8%; font-size:30px; color:#4A443A; line-height:1.7; }
+
+  /* ---------- S7 收束 ---------- */
+  #s7 .a { top:24%; left:8%; font-size:64px; color:#26221C; }
+  #s7 .b { top:37%; left:8%; font-size:48px; color:#B8860B; }
+  #s7 .next{ top:54%; left:8%; font-size:52px; color:#C74334; }
+  #s7 .e { top:83.5%; left:8%; font-size:30px; color:#8A8172; }
+</style>
+</head>
+<body>
+<div id="stage">
+  <div id="hdr">财经科普 EP.03 · 沪深300</div>
+  <div id="prog"><div id="barfill"></div></div>
+
+  <section id="s1" class="sec">
+    <span class="tag">钩子</span>
+    <div class="el serif h1">300家公司</div>
+    <div class="el serif h2">占中国股市近七成市值</div>
+    <div class="el serif mid">这个指数，叫沪深300</div>
+    <div class="el twist1">你印象里的它，早就过时了</div>
+    <div class="el serif twist2">第一大行业，已不是银行白酒</div>
+    <div class="el serif end">3分钟，重新认识它</div>
+    <div class="foot">数据：中证指数公司，截至2026-10 · 仅为科普·不构成投资建议 · 1/7</div>
+  </section>
+
+  <section id="s2" class="sec">
+    <span class="tag">是什么</span>
+    <div class="el serif title">怎么选出来的？</div>
+    <div class="el l1">沪深两市，按市值和成交活跃度排队</div>
+    <div class="el serif l2">选出最大的 300 家</div>
+    <div class="el l3">每半年换血一次 · 差的踢出去，好的补进来</div>
+    <div class="el serif hero">覆盖全市场 ≈70% 的市值</div>
+    <div class="el note">永远代表A股最核心的300家公司</div>
+    <div class="foot">数据：中证指数公司，截至2026-10 · 仅为科普·不构成投资建议 · 2/7</div>
+  </section>
+
+  <section id="s3" class="sec">
+    <span class="tag">里面有什么</span>
+    <div class="el serif title">里面都是什么行业？</div>
+    <div class="n1"><div class="el name">信息技术</div><div class="el bar b1"></div><div class="el pct p1">21.6%</div></div>
+    <div class="n2"><div class="el name">金融</div><div class="el bar b2"></div><div class="el pct p2">20.8%</div></div>
+    <div class="n3"><div class="el name">工业</div><div class="el bar b3"></div><div class="el pct p3">15.8%</div></div>
+    <div class="n4"><div class="el name">通信服务</div><div class="el bar b4"></div><div class="el pct p4">9.9%</div></div>
+    <div class="n5"><div class="el name">原材料</div><div class="el bar b5"></div><div class="el pct p5">9.0%</div></div>
+    <div class="n6"><div class="el name">主要消费</div><div class="el bar b6"></div><div class="el pct p6">6.6%</div></div>
+    <div class="el serif twist">科技，反超了金融</div>
+    <div class="el sub">五年前，金融才是绝对老大</div>
+    <div class="foot">数据：中证指数公司，截至2026-10 · 仅为科普·不构成投资建议 · 3/7</div>
+  </section>
+
+  <section id="s4" class="sec">
+    <span class="tag">权重股</span>
+    <div class="el serif title">前十大权重股</div>
+    <div class="el k1">中际旭创 · 宁德时代</div>
+    <div class="el k2">贵州茅台 · 中国平安</div>
+    <div class="el k3">招商银行 · 美的集团</div>
+    <div class="el k7">……</div>
+    <div class="el serif big">前十合计 ≈ 23%</div>
+    <div class="el uline"></div>
+    <div class="el sub">没有一只股票，能只手遮天</div>
+    <div class="el serif fact2">五年间，前十换了 6 家</div>
+    <div class="foot">数据：中证指数公司，截至2026-10 · 仅为科普·不构成投资建议 · 4/7</div>
+  </section>
+
+  <section id="s5" class="sec">
+    <span class="tag">和上证比</span>
+    <div class="el serif title">和上证指数，差在哪？</div>
+    <div class="el serif c1">上证指数</div>
+    <div class="el c1d">上交所全场平均 · 银行石油占比高
+ST小票也在里</div>
+    <div class="el sep"></div>
+    <div class="el serif c2">沪深300</div>
+    <div class="el c2d">全市场精选300家 · 跨沪深两市
+没有杂鱼</div>
+    <div class="el serif punch">看核心资产，看它更准</div>
+    <div class="foot">数据：中证指数公司，截至2026-10 · 仅为科普·不构成投资建议 · 5/7</div>
+  </section>
+
+  <section id="s6" class="sec">
+    <span class="tag">怎么买</span>
+    <div class="el serif title">想买它？不用挨个买</div>
+    <div class="el serif code">510300</div>
+    <div class="el label">沪深300ETF</div>
+    <div class="el note">多家基金公司都有对应产品
+门槛几百块</div>
+    <div class="foot">数据：中证指数公司，截至2026-10 · 仅为科普·不构成投资建议 · 6/7</div>
+  </section>
+
+  <section id="s7" class="sec">
+    <span class="tag">收束</span>
+    <div class="el serif a">沪深300：核心资产的代表</div>
+    <div class="el serif b">但它在进化——科技坐上头把交椅</div>
+    <div class="el serif next">下一期：成长的主角——创业板指</div>
+    <div class="el e">仅为科普 · 不构成投资建议 · 股市有风险</div>
+    <div class="foot">数据：中证指数公司，截至2026-10 · 仅为科普·不构成投资建议 · 7/7</div>
+  </section>
+</div>
+
+<script src="gsap.min.js"></script>
+<script>
+window.init = function (spec) {
+  const tl = gsap.timeline({ paused: true });
+
+  spec.sections.forEach((sec, i) => {
+    const el = document.querySelector("#" + sec.id);
+    if (i > 0) tl.fromTo(el, { autoAlpha: 0 }, { autoAlpha: 1, duration: 0.25 }, sec.start);
+    else tl.set(el, { autoAlpha: 1 }, 0);
+    if (i < spec.sections.length - 1)
+      tl.to(el, { autoAlpha: 0, duration: 0.25 }, sec.start + sec.dur - 0.25);
+    tl.fromTo("#barfill",
+      { width: (i / spec.sections.length * 100) + "%" },
+      { width: ((i + 1) / spec.sections.length * 100) + "%", duration: sec.dur, ease: "none" },
+      sec.start);
+  });
+
+  spec.cues.forEach(c => {
+    const sel = c[0], type = c[1], t = c[2], arg = c[3];
+    const el = document.querySelector(sel);
+    if (!el) return;
+    if (type === "rise")
+      tl.fromTo(el, { autoAlpha: 0, y: 34 }, { autoAlpha: 1, y: 0, duration: 0.45, ease: "power2.out" }, t);
+    else if (type === "fade")
+      tl.fromTo(el, { autoAlpha: 0 }, { autoAlpha: 1, duration: 0.35 }, t);
+    else if (type === "drawX")
+      tl.fromTo(el, { scaleX: 0, transformOrigin: "left center" }, { scaleX: 1, duration: 0.5, ease: "power2.out" }, t);
+    else if (type === "drawY")
+      tl.fromTo(el, { scaleY: 0, transformOrigin: "center top" }, { scaleY: 1, duration: 0.4, ease: "power2.out" }, t);
+    else if (type === "count") {
+      tl.fromTo(el, { autoAlpha: 0, y: 26 }, { autoAlpha: 1, y: 0, duration: 0.4, ease: "power2.out" }, t);
+      const numEl = el.querySelector(".num");
+      const obj = { v: 0 };
+      tl.to(obj, { v: arg, duration: 0.7, ease: "power1.out",
+        onUpdate: () => { numEl.textContent = Math.round(obj.v); } }, t + 0.05);
+    }
+  });
+
+  tl.seek(0, true);
+  window._tl = tl;
+};
+window.seek = function (t) { const tl = window._tl; tl.pause(); tl.seek(t, false); };
+</script>
+</body>
+</html>
