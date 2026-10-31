@@ -20,4 +20,4 @@
 ## 51号旧暗色管线（停用，仅保留查阅）
 
 `build_all.py`、`theme.py`、`theme_base36.py`、`gate_check.py`、`cue_timing_check.py`、`fullframe_accept.py`、`regression_check.py`、`baseline_frame_compare.py`、`make_checklist.py`、`qa_video.py`、`subs.py`、`calibrate.py`。
-停用原因见 CHANGELOG 52号。旧版 README 在 `D:\AI\stock-video_备份_51号\`。
+停用原因见 CHANGELOG 52号。旧版 README 在作者本机备份，不在仓库里。

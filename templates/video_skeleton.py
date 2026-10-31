@@ -7,7 +7,11 @@
 这份骨架故意不带任何一期的章节：章节、顺序、每章构图从这一期的 故事.md 推出来，不看别期的分镜代码。
 """
 import os, sys, json
-sys.path.insert(0, r'D:\AI\.opencode\skill\stock-video\scripts')
+# skill 目录（SKILL.md 所在目录）：复制骨架时把 <skill> 换成本机路径，或设环境变量 STOCK_VIDEO_SKILL
+SKILL = os.environ.get('STOCK_VIDEO_SKILL') or r'<skill>'
+if not os.path.isfile(os.path.join(SKILL, 'scripts', 'motion.py')):
+    sys.exit(f'找不到 skill 脚本：{SKILL}\\scripts\\motion.py —— 把 video.py 里的 <skill> 换成 skill 目录，或设环境变量 STOCK_VIDEO_SKILL')
+sys.path.insert(0, os.path.join(SKILL, 'scripts'))
 import numpy as np, pandas as pd
 import motion as M
 from motion import *          # 配色、Frame、缓动 pg/out/eo/eio、图表原语

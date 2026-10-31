@@ -13,7 +13,8 @@ import re
 import sys
 
 SKILL = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "SKILL.md")
-VIDEOS = r"D:\AI\videos"
+# 旧管线的成片目录（51号前），可用环境变量 STOCK_VIDEO_OLD_VIDEOS 指定
+VIDEOS = os.environ.get("STOCK_VIDEO_OLD_VIDEOS", r"D:\AI\videos")
 
 
 def load_ep(ep_no):
