@@ -9,7 +9,9 @@
     - 两个触发点之间隔太久：按约 4.3 字/秒估，超过 STILL_MAX 秒（和 preview 的静止段同一条线，读 motion.py）
     - 红线：结尾没念免责、念了买卖建议 / 目标价口吻、讲参考价的那章画面列没写"非目标价"
     - 未经审计的数第一次出现时，旁白还没说过"未经审计"
+    - 总览没填"公司一句话"，或"生意那一拍落在：第 N 章第 M 句"没填 / 指向不存在的句子（57号补丁十四）
   要核（不挡路，口径审员和作者对着看）：
+    - 开场章旁白里没出现"公司一句话"里的词（开场可能没说它是做什么的）
     - 旁白数字在 facts.json 里找不到；旁白数字 ↔ facts 说法对照
     - 同一个数念了 ≥3 句
     - 用了强推断词却没说"推测 / 可能"
@@ -77,12 +79,45 @@ def frag(text, a, b):
     return s if len(s) <= 40 else s[:38] + '…'
 
 
+BIZ_STOP = set('它靠给赚钱的和与及是在把从向卖做')
+
+
+def business(md, chs, lines):
+    """公司做什么（补丁十四）→ (必须改, 要核, 给作者看的那几句)"""
+    must, check, show = [], [], []
+    m = re.search(r'^-\s*公司一句话[^：:\n]*[：:][ \t]*(.*)$', md, re.M)
+    one = m.group(1).strip() if m else ''
+    if not one or '<' in one or '_' in one:
+        must.append('总览的"公司一句话"没填：照 故事.md 第零节写"它靠 X 卖给 Y 赚钱"')
+    else:
+        show.append(f'- 公司一句话：{one}')
+        cs = [c for c in re.sub(r'[^一-鿿]', '', one)]
+        grams = {a + b for a, b in zip(cs, cs[1:]) if a not in BIZ_STOP and b not in BIZ_STOP}
+        opening = ''.join(lines[0]) if lines else ''
+        if grams and not any(g in opening for g in grams):
+            check.append(f'开场（第 {chs[0][0]} 章）旁白里没出现"公司一句话"里的词：开场念到公司时有没有半句说它是做什么的？')
+    m = re.search(r'^-\s*生意那一拍落在[：:]\s*第\s*(\d+)\s*章第\s*(\d+)\s*句', md, re.M)
+    if not m:
+        must.append('总览的"生意那一拍落在：第 N 章第 M 句"没填：写明故事第一次讲到收入、讲全几块业务怎么收钱的那一句')
+    else:
+        ci, li = int(m.group(1)), int(m.group(2))
+        hit = [k for k, (no, _, _) in enumerate(chs) if int(no) == ci]
+        if not hit or li < 1 or li > len(lines[hit[0]]):
+            must.append(f'"生意那一拍"指向第 {ci} 章第 {li} 句，文字方案里没有这一句')
+        else:
+            k = hit[0]
+            seg = lines[k][li - 1:li + 2]
+            show.append(f'- 生意那一拍（第 {chs[k][0]} 章第 {li} 句起）：' + ' / '.join(seg))
+    return must, check, show
+
+
 def main():
     if len(sys.argv) < 2: print(__doc__); return 0
     root = os.path.abspath(sys.argv[1])
     md_p = os.path.join(root, '文字方案.md')
     if not os.path.exists(md_p): print('找不到', md_p); return 2
-    chs = parse(open(md_p, encoding='utf-8').read())
+    md = open(md_p, encoding='utf-8').read()
+    chs = parse(md)
     if not chs: print('文字方案里没读到"### NN 章名"和旁白表格'); return 2
     fp = os.path.join(root, 'facts.json')
     facts = json.load(open(fp, encoding='utf-8')) if os.path.exists(fp) else {}
@@ -109,6 +144,10 @@ def main():
 
     # 红线
     must += R.redlines(lines, pics)
+
+    # 公司做什么、靠什么赚钱
+    bm, bc, biz = business(md, chs, lines)
+    must += bm; check += bc
 
     # 未经审计：第一次念到标了"未经审计"的数时，前面（含这句）要说过
     labels = facts.get('labels', {})
@@ -150,6 +189,7 @@ def main():
     out = [head, '',
            f'## 必须改（触发点间隔上限 {smax:.0f} 秒，和 preview 的静止段同一条线）'] + [f'- {x}' for x in must or ['无']] + \
           ['', '## 要核（作者和口径审员对着看，不挡路）'] + [f'- {x}' for x in check or ['无']] + \
+          ['', '## 公司做什么（作者对着看：外行听完知道它卖什么、给谁、怎么收钱吗）'] + (biz or ['- 无']) + \
           ['', '## 长句（建议拆，不强制）'] + [f'- {x}' for x in longs or ['无']] + \
           ['', '## 旁白数字 ↔ facts 说法（给口径审员）'] + (ref or ['- 无（没有 facts.json 或没对上的数）'])
     open(os.path.join(root, 'plan_check.txt'), 'w', encoding='utf-8').write('\n'.join(out))
