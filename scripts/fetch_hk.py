@@ -11,7 +11,7 @@
   profile.csv          公司资料
   comp_<代码>_*.csv    同行：三大表利润表 + 百度 PE/PB
   fetch_log.json
-港股年报/中报原文不自动抓：去 hkexnews.hk（披露易）下载 PDF 放进 <工程>\\data\\reports\\，
+港股年报/中报原文不自动抓：去 hkexnews.hk（披露易）下载 PDF 放进 <工程>/data/reports/，
 用 fitz 抽文本后在 facts.py 里逐条注明页码（口径见 方法与口径 §1 港股条）。"""
 import io, json, os, sys, time, traceback
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
@@ -19,7 +19,8 @@ import warnings; warnings.filterwarnings('ignore')
 import akshare as ak
 
 args = [a for a in sys.argv[1:] if not a.startswith('--')]
-code, OUT, peers = args[0], args[1], args[2:]
+if len(args) < 2 or not args[0].isdigit(): sys.exit(__doc__)
+code, OUT, peers = args[0].zfill(5), args[1], [p.zfill(5) for p in args[2:]]   # 港股代码补足 5 位：3918 → 03918
 os.makedirs(OUT, exist_ok=True)
 log = {}
 
@@ -60,4 +61,6 @@ for p in peers:
     grab(f'comp_{p}_is.csv', ak.stock_financial_hk_report_em, stock=p, symbol='利润表', indicator='年度')
     grab(f'comp_{p}_pe.csv', ak.stock_hk_valuation_baidu, symbol=p, indicator='市盈率(TTM)', period='近十年')
     grab(f'comp_{p}_pb.csv', ak.stock_hk_valuation_baidu, symbol=p, indicator='市净率', period='近十年')
-json.dump(log, open(os.path.join(OUT, 'fetch_log.json'), 'w', encoding='utf-8'), ensure_ascii=False, indent=1)
+with open(os.path.join(OUT, 'fetch_log.json'), 'w', encoding='utf-8') as fp: json.dump(log, fp, ensure_ascii=False, indent=1)
+fails = [k for k, v in log.items() if str(v).startswith('FAIL')]
+if fails: print('失败项（详见 fetch_log.json）：', '、'.join(fails))

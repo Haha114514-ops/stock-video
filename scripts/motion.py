@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
-"""motion.py —— 暗色个股片的逐帧动画引擎（52号起的唯一渲染管线）
+r"""motion.py —— 暗色个股片的逐帧动画引擎（52号起的唯一渲染管线）
 
 源自「爱美客_自由版」的自写渲染器，抽成通用库。每期只写一个分镜脚本：
 
-    import sys; sys.path.insert(0, r'<skill>\\scripts')
+    import sys; sys.path.insert(0, '<skill>/scripts')
     import motion as M
     from motion import *          # 配色、Frame、缓动、图表原语
 
@@ -12,8 +12,8 @@
             scenes=[('开场', [句1, 句2, ...], s0), ...])   # 必须写在模块顶层（多进程渲染要重新 import）
     if __name__ == '__main__': M.cli()
 
-命令：tts → preview → render → mux（all 一次跑完；render resume 断点续渲）
-check（preview 末尾自动跑）：不渲染，列出"念到的数字画面上没有""除章标题外什么都没有""空框"，写 output\check.txt
+命令：tts → preview → render → mux（all 一次跑完；render resume 断点续渲；render --jobs 4 指定并行数）
+check（preview 末尾自动跑）：不渲染，列出"念到的数字画面上没有""除章标题外什么都没有""空框"，写 output/check.txt
 动画的基本写法：a = pg(t, B[2])  →  第 3 句开口时开始、0.7 秒内从 0 缓动到 1，用来控制透明度/长度/数字。
 长句里的第二、三个意思挂到它被念到的那一刻：pg(t, B.at(2, '6.5%')) = 第 3 句念到"6.5%"时；
 B.S[2][1] = 第 3 句第 2 条字幕开口时（字幕在逗号处切）。
@@ -23,6 +23,8 @@ B.S[2][1] = 第 3 句第 2 条字幕开口时（字幕在逗号处切）。
 import os, sys, json, math, re, asyncio, subprocess, wave
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import sysenv
 
 W, H, FPS = 1920, 1080, 30
 SR = 24000
@@ -33,13 +35,14 @@ GOLD = (245, 185, 66); TEAL = (56, 189, 248); INDIGO = (110, 115, 245)
 RED = (255, 82, 82); GREEN = (34, 197, 120); PURPLE = (176, 140, 255); ORANGE = (240, 130, 100)
 CARD = (18, 30, 58); EDGE = (52, 72, 112); GREY = (78, 94, 128); GRID = (60, 78, 115)
 
-FR, FB, FN = 'C:/Windows/Fonts/msyh.ttc', 'C:/Windows/Fonts/msyhbd.ttc', 'C:/Windows/Fonts/bahnschrift.ttf'
+FR, FB, FN = sysenv.font_file('r'), sysenv.font_file('b'), sysenv.font_file('n')   # 本机字体，见 sysenv.py
 _fc = {}
 def font(size, kind='r'):
-    """r=雅黑 b=雅黑粗 n=数字字体（bahnschrift 粗体，含中文时自动混排）"""
+    """r=正文 b=粗体 n=数字字体（含中文时自动混排）；具体字体按本机取，见 sysenv.py"""
     k = (int(size), kind)
     if k not in _fc:
-        f = ImageFont.truetype({'r': FR, 'b': FB, 'n': FN}[kind], int(size))
+        fp, fi = {'r': FR, 'b': FB, 'n': FN}[kind]
+        f = ImageFont.truetype(fp, int(size), index=fi)
         if kind == 'n':
             for nm in ('Bold', b'Bold', 'SemiBold'):
                 try: f.set_variation_by_name(nm); break
@@ -246,9 +249,11 @@ def background():
 
 # ---------- 工程配置 ----------
 C = dict(root=None, name='', code='', source='', voice='zh-CN-YunyangNeural', rate='+6%',
-         lead=0.7, gap=0.35, tail=1.0, scenes=[], out_name='final.mp4', music=0.075, sub_size=44, spotlight=True, spot_dim=0.22)
+         lead=0.7, gap=0.35, tail=1.0, scenes=[], out_name='final.mp4', music=0.075, sub_size=44, spotlight=True, spot_dim=0.22,
+         crf=18, preset='medium', x264_threads=3)      # 编码参数：要更快出片可在 setup 里传 preset='veryfast'
 def setup(**kw):
     C.update(kw)
+    if not C['root']: raise ValueError('M.setup 要传 root=工程目录（骨架里是 ROOT）')
     for d in ('audio', 'chunks', 'output'): os.makedirs(os.path.join(C['root'], d), exist_ok=True)
 def P(*a): return os.path.join(C['root'], *a)
 
@@ -304,7 +309,7 @@ def split_sub(s):
 
 # ---------- 音频 ----------
 def decode(path):
-    raw = subprocess.run(['ffmpeg', '-loglevel', 'error', '-i', path, '-f', 's16le', '-ac', '1', '-ar', str(SR), '-'],
+    raw = subprocess.run(sysenv.ffmpeg('-loglevel', 'error', '-i', path, '-f', 's16le', '-ac', '1', '-ar', str(SR), '-'),
                          capture_output=True, check=True).stdout
     return np.frombuffer(raw, np.int16).astype(np.float32) / 32768
 
@@ -315,7 +320,8 @@ async def _tts():
     import edge_tts
     sem = asyncio.Semaphore(6)
     old = {}
-    if os.path.exists(P('audio', _TXT_LOG)): old = json.load(open(P('audio', _TXT_LOG), encoding='utf-8'))
+    if os.path.exists(P('audio', _TXT_LOG)):
+        with open(P('audio', _TXT_LOG), encoding='utf-8') as fp: old = json.load(fp)
     new = {}
     async def one(si, li, s):
         p = _apath(si, li); k = os.path.basename(p); new[k] = s
@@ -326,7 +332,7 @@ async def _tts():
                 except Exception as e: print('retry', k, e); await asyncio.sleep(2 + 2 * i)
             raise RuntimeError('TTS 失败: ' + k)
     await asyncio.gather(*[one(si, li, s) for si, (_, ls, _) in enumerate(C['scenes']) for li, s in enumerate(ls)])
-    json.dump(new, open(P('audio', _TXT_LOG), 'w', encoding='utf-8'), ensure_ascii=False, indent=0)
+    with open(P('audio', _TXT_LOG), 'w', encoding='utf-8') as fp: json.dump(new, fp, ensure_ascii=False, indent=0)
 
 def build_timeline():
     tl = []; off = 0.0; n = len(C['scenes'])
@@ -343,11 +349,13 @@ def build_timeline():
         nf = int(round(T * FPS)); T = nf / FPS
         for i in range(len(subs) - 1): subs[i][1] = max(subs[i][1], min(subs[i + 1][0], subs[i][1] + C['gap']))
         tl.append(dict(beats=beats, durs=durs, subs=subs, T=T, frames=nf, off=off)); off += T
-    json.dump(dict(scenes=tl, total=off), open(P('timeline.json'), 'w', encoding='utf-8'), ensure_ascii=False, indent=1)
+    with open(P('timeline.json'), 'w', encoding='utf-8') as fp: json.dump(dict(scenes=tl, total=off), fp, ensure_ascii=False, indent=1)
     return tl, off
 
 def load_tl():
-    j = json.load(open(P('timeline.json'), encoding='utf-8')); return j['scenes'], j['total']
+    if not os.path.exists(P('timeline.json')): sys.exit('还没有 timeline.json：先跑 python video.py tts')
+    with open(P('timeline.json'), encoding='utf-8') as fp: j = json.load(fp)
+    return j['scenes'], j['total']
 
 def music(n):
     """自生成的柔和铺底和弦（无版权问题）"""
@@ -544,7 +552,7 @@ def check_report(rows):
 def cmd_check():
     L = check_report(check_scenes())
     open(P('output', 'check.txt'), 'w', encoding='utf-8').write('\n'.join(L) or '无')
-    print(f'对口型检查（念到的数字画面上有没有、除章标题外有没有内容、有没有空框、字太小、红绿没图例、示意没标）：{len(L)} 处 → output\\check.txt')
+    print(f'对口型检查（念到的数字画面上有没有、除章标题外有没有内容、有没有空框、字太小、红绿没图例、示意没标）：{len(L)} 处 → output/check.txt')
     for x in L: print('  ' + x)
 
 # ---------- 静止段（57号）：preview 阶段就按分镜函数抽帧查"3 秒以上不动" ----------
@@ -581,7 +589,7 @@ def _still_where(si, s0, s1):
 def cmd_still():
     from multiprocessing import Pool
     tl, total = load_tl()
-    with Pool(min(8, os.cpu_count(), len(tl))) as pool: res = sorted(pool.map(_still_scene, range(len(tl))))
+    with Pool(min(sysenv.jobs(), len(tl))) as pool: res = sorted(pool.map(_still_scene, range(len(tl))))
     L = []; tot = 0.0; per = []
     for si, segs in res:
         st = sum(b - a for a, b in segs); tot += st; per.append(f'{si:02d}:{st / tl[si]["T"] * 100:.0f}%')
@@ -597,7 +605,7 @@ def cmd_still():
            '3~7 秒的停顿是让观众看图，不用补。')
     open(P('output', 'still.txt'), 'w', encoding='utf-8').write(
         '\n'.join([head, tip, '', f'## 必须补（>{STILL_MAX:.0f} 秒）'] + (must or ['无']) + ['', '## 全部 ≥3 秒的段（参考）'] + L))
-    print(head + ' → output\\still.txt')
+    print(head + ' → output/still.txt')
     if must:
         print('  ' + tip)
         for x in must[:12]: print('  ' + x)
@@ -605,7 +613,7 @@ def cmd_still():
 # ---------- 单帧抽查（57号补丁四）：看动效中间态，不用全片渲染 ----------
 def cmd_frames(specs):
     """python video.py frames 2:5:1.5 4:6 …  每项 = 章:句[:句内偏移秒]（句从 1 数，和 still.txt、审片包一致；偏移默认 1.0）。
-    两列拼图 → output\\frames.png。preview 每章只抽 3 帧，飞入 / 拆条 / 滚数的中途状态看不到，压没压住别的东西用这个查。"""
+    两列拼图 → output/frames.png。preview 每章只抽 3 帧，飞入 / 拆条 / 滚数的中途状态看不到，压没压住别的东西用这个查。"""
     tl, total = load_tl(); offs = [s['off'] for s in tl]; ims = []; labs = []
     for sp in specs:
         p = sp.split(':'); si, li = int(p[0]), int(p[1]) - 1; dt = float(p[2]) if len(p) > 2 else 1.0
@@ -639,12 +647,17 @@ def render_chunk(job):
     si, a, b, path, resume = job
     if resume and os.path.exists(path) and os.path.getsize(path) > 10000: return path
     tl, total = load_tl(); sc = tl[si]; offs = [s['off'] for s in tl]
-    cmd = ['ffmpeg', '-y', '-loglevel', 'error', '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-s', f'{W}x{H}', '-r', str(FPS), '-i', '-',
-           '-c:v', 'libx264', '-threads', '3', '-preset', 'medium', '-crf', '18', '-pix_fmt', 'yuv420p', '-r', str(FPS), path]
+    tmp = path[:-4] + '.part.mp4'          # 先写临时文件，渲完再改名：中途打断不会留下"看着完整"的坏块给 resume 跳过
+    cmd = sysenv.ffmpeg('-y', '-loglevel', 'error', '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-s', f'{W}x{H}', '-r', str(FPS), '-i', '-',
+                        '-c:v', 'libx264', '-threads', str(C['x264_threads']), '-preset', C['preset'], '-crf', str(C['crf']),
+                        '-pix_fmt', 'yuv420p', '-r', str(FPS), tmp)
     pr = subprocess.Popen(cmd, stdin=subprocess.PIPE)
-    for fi in range(a, b): pr.stdin.write(render_frame(si, fi / FPS, sc, total, offs).tobytes())
-    pr.stdin.close(); pr.wait()
+    try:
+        for fi in range(a, b): pr.stdin.write(render_frame(si, fi / FPS, sc, total, offs).tobytes())
+    finally:
+        pr.stdin.close(); pr.wait()
     if pr.returncode: raise RuntimeError('ffmpeg 失败: ' + path)
+    os.replace(tmp, path)
     return path
 
 # ---------- 命令 ----------
@@ -669,29 +682,30 @@ def cmd_preview(only=None):
     cmd_check()
     if only is None: cmd_still()          # 57号：静止段在 preview 就报，不等成片
 
-def cmd_render(resume=False, only=None):
+def cmd_render(resume=False, only=None, jobs=None):
     from multiprocessing import Pool
-    tl, total = load_tl(); jobs = []
+    tl, total = load_tl(); jobs_ = []
     for si, sc in enumerate(tl):
         for a in range(0, sc['frames'], 240):
             p = P('chunks', f'c{si:02d}_{a:05d}.mp4')
             skip_ok = (resume or only is not None) and (only is None or si not in only)   # --only 只重渲点名场景
-            jobs.append((si, a, min(sc['frames'], a + 240), p, skip_ok))
-    with Pool(min(8, os.cpu_count())) as pool:
-        for i, p in enumerate(pool.imap(render_chunk, jobs)): print(f'{i + 1}/{len(jobs)}', os.path.basename(p), flush=True)
-    keep = {j[3] for j in jobs}
+            jobs_.append((si, a, min(sc['frames'], a + 240), p, skip_ok))
+    with Pool(jobs or sysenv.jobs()) as pool:
+        for i, p in enumerate(pool.imap(render_chunk, jobs_)): print(f'{i + 1}/{len(jobs_)}', os.path.basename(p), flush=True)
+    keep = {j[3] for j in jobs_}
     for fn in os.listdir(P('chunks')):                     # 清掉时间轴变动后多余的旧块
         fp = P('chunks', fn)
-        if fn.endswith('.mp4') and fp not in keep: os.remove(fp)
+        if fn.endswith('.mp4') and fp not in keep: os.remove(fp)        # 也清掉打断留下的 .part.mp4
     with open(P('chunks', 'list.txt'), 'w', encoding='utf-8') as fl:
-        for j in jobs: fl.write(f"file '{j[3]}'\n")
+        for j in jobs_: fl.write("file '" + j[3].replace("'", "'\\''") + "'\n")   # concat 列表里路径的单引号要转义
 
 def cmd_mux():
+    if not os.path.exists(P('chunks', 'list.txt')): sys.exit('还没有渲染好的画面：先跑 python video.py render')
     tl, total = load_tl(); wav = mix_audio(tl, total); o = P('output', C['out_name'])
-    subprocess.run(['ffmpeg', '-y', '-loglevel', 'error', '-f', 'concat', '-safe', '0', '-i', P('chunks', 'list.txt'), '-i', wav,
+    subprocess.run(sysenv.ffmpeg('-y', '-loglevel', 'error', '-f', 'concat', '-safe', '0', '-i', P('chunks', 'list.txt'), '-i', wav,
                     '-c:v', 'copy', '-af', 'loudnorm=I=-16:TP=-1.5:LRA=11', '-c:a', 'aac', '-b:a', '192k', '-ar', '48000',
-                    '-shortest', '-movflags', '+faststart', o], check=True)
-    def ts(x): h = int(x // 3600); m = int(x % 3600 // 60); s = x % 60; return f'{h:02d}:{m:02d}:{int(s):02d},{int(s % 1 * 1000):03d}'
+                    '-shortest', '-movflags', '+faststart', o), check=True)
+    def ts(x): ms = int(round(x * 1000)); return f'{ms // 3600000:02d}:{ms // 60000 % 60:02d}:{ms // 1000 % 60:02d},{ms % 1000:03d}'
     k = 1
     with open(o[:-4] + '.srt', 'w', encoding='utf-8') as fs:
         for sc in tl:
@@ -699,13 +713,29 @@ def cmd_mux():
                 fs.write(f"{k}\n{ts(sc['off'] + a)} --> {ts(sc['off'] + b)}\n{txt}\n\n"); k += 1
     print('done', o)
 
+USAGE = """用法：python video.py <命令>
+  tts                     逐句配音 + 时间轴
+  preview [--only 3,5]    每章 3 帧拼图 + 对口型检查 + 静止段
+  check | still           只跑对口型检查 / 静止段
+  frames 章:句[:秒] …     单帧抽查拼图
+  render [resume] [--only 3,5] [--jobs N]   并行渲染（N 默认 CPU 核数，最多 8；也可设 STOCK_VIDEO_JOBS）
+  mux                     混音 + 响度归一 → 成片 + .srt
+  all                     tts → render → mux"""
+
 def cli():
     a = sys.argv[1:] or ['all']; c = a[0]
-    only = [int(x) for x in a[a.index('--only') + 1].split(',')] if '--only' in a else None
+    def opt(k):
+        if k not in a: return None
+        i = a.index(k)
+        if i + 1 >= len(a): sys.exit(f'{k} 后面要跟值\n' + USAGE)
+        return a[i + 1]
+    only = [int(x) for x in opt('--only').split(',')] if opt('--only') else None
+    jobs = int(opt('--jobs')) if opt('--jobs') else None
+    if c not in ('tts', 'preview', 'check', 'still', 'frames', 'render', 'mux', 'all'): sys.exit(USAGE)
     if c in ('tts', 'all'): cmd_tts()
     if c == 'preview': cmd_preview(only)
     if c == 'check': cmd_check()
     if c == 'still': cmd_still()
     if c == 'frames': cmd_frames([x for x in a[1:] if ':' in x])
-    if c in ('render', 'all'): cmd_render(resume='resume' in a, only=only)
+    if c in ('render', 'all'): cmd_render(resume='resume' in a, only=only, jobs=jobs)
     if c in ('mux', 'all'): cmd_mux()
