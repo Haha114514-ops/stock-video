@@ -1,5 +1,15 @@
 # stock-video SKILL 沿革全录（51号起沿革外移至此，64号#9）
 
+## 57号补丁十六（2026-11-01）：fxplus.py，第二组动效工具，不规定用法
+- 起因：用户想要更多特效——镜头运动、对比、时间轴、手绘强调、瀑布图 / 桑基图、转场，并且"不要写死用法，让模型自由发挥"。
+- 原本想保证什么：画面员手里有足够多的表达手段，但不会因为规约里列了"什么时候用什么"而把每期做成一个样子；fx.py 原来"不做转场特效"的顾虑，改成"工具给全、用法交给内容"。
+- 改动：
+  - 新增 `scripts/fxplus.py`：`camera` / `cam_keys`（镜头推拉平移，只动内容、背景不动，字的位置一起换算）、`versus`（两数并排长出 / 对撞，差值、倍数、变化率可选）、`timeline`（扫描式时间轴，事件可挂到 `B.at`）、`ring` / `arrow` / `highlight` / `underline`（手绘感强调）、`waterfall`（瀑布图）、`sankey`（多列桑基图，按源 / 终点着色、可突出一条流）、`transition`（同一块画面 A → B：fade / wipe / slide / flip / iris / blinds；子画布记下的字并回主画布，对口型检查照常）。全部是纯函数，参数开放。
+  - `motion.py`：`setup(edge_fade=0.3)`，章节首尾黑场淡入淡出的秒数，0 关掉（章节自己做进出场）；默认值不变。
+  - `fx.py` 文档去掉"不做转场特效"一句，指向 fxplus；骨架加 `from fx import *`、`from fxplus import *`；`api_ref.py` 速查收录 fxplus。
+  - SKILL 第 4 步加一句工具清单，写明"不规定用法"；没有新增任何"必须用 / 什么时候用"的规则。
+- 实测：每种效果抽帧拼图检查；用骨架搭 6 章演示片（每章一种效果）跑 tts → preview → render → mux，对口型检查 0 处（camera / transition 下字的位置换算正确），出片 1 分 02 秒。
+
 ## 57号补丁十五（2026-11-01）：能在 macOS 上跑，跟本机有关的设置集中到 sysenv.py
 - 起因：在 macOS 上装这个 skill，`motion.py` 一 import 就因为 `C:/Windows/Fonts/msyh.ttc` 不存在而失败；`review_pack.py` 同样；`build_v4.py` 写死 Windows 的 Chrome 路径，用 `"file:///" + 路径` 打开页面，中文路径和空格都没转义；Homebrew 的 ffmpeg 不带 libass，竖屏片最后一步烧字幕直接报错。
 - 原本想保证什么：别人拿到仓库，不管 Windows 还是 macOS，装好依赖就能做片，不用改脚本；作者在 Windows 上的行为不变（候选字体顺序 Windows 优先）。

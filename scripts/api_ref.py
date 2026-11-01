@@ -1,10 +1,10 @@
 """画面员用的 API 速查（57号补丁六）：python api_ref.py
-从 motion.py / components.py / fx.py 源码直接列出公开函数、类方法的签名和文档首段，以及颜色等常量。
+从 motion.py / components.py / fx.py / fxplus.py 源码直接列出公开函数、类方法的签名和文档首段，以及颜色等常量。
 每次现跑、不手写，脚本改了速查自动跟着变。读它代替通读三份源码；要看某个函数的实现，再按行号去读那几行。"""
 import ast, os, sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-FILES = ['motion.py', 'components.py', 'fx.py']
+FILES = ['motion.py', 'components.py', 'fx.py', 'fxplus.py']
 
 
 def doc1(node, n=2):

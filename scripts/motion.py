@@ -250,7 +250,8 @@ def background():
 # ---------- 工程配置 ----------
 C = dict(root=None, name='', code='', source='', voice='zh-CN-YunyangNeural', rate='+6%',
          lead=0.7, gap=0.35, tail=1.0, scenes=[], out_name='final.mp4', music=0.075, sub_size=44, spotlight=True, spot_dim=0.22,
-         crf=18, preset='medium', x264_threads=3)      # 编码参数：要更快出片可在 setup 里传 preset='veryfast'
+         crf=18, preset='medium', x264_threads=3,      # 编码参数：要更快出片可在 setup 里传 preset='veryfast'
+         edge_fade=0.3)                                # 每章首尾淡入淡出黑场的秒数；0 = 不淡，章节自己做进出场（如 fxplus.transition）
 def setup(**kw):
     C.update(kw)
     if not C['root']: raise ValueError('M.setup 要传 root=工程目录（骨架里是 ROOT）')
@@ -639,7 +640,7 @@ def render_frame(si, t, sc, total, offs):
     NOW[0] = t; f.rec = None
     chrome(f, si, sc['off'] + t, total, offs)
     subtitle(f, t, sc['subs'])
-    fade = min(clamp(t / 0.3), clamp((sc['T'] - t) / 0.3))
+    ef = C['edge_fade']; fade = min(clamp(t / ef), clamp((sc['T'] - t) / ef)) if ef > 0 else 1
     if fade < 1: im = Image.blend(Image.new('RGB', (W, H), (0, 0, 0)), im, eio(fade))
     return im
 

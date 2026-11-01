@@ -31,6 +31,8 @@ import numpy as np, pandas as pd
 import motion as M
 from motion import *          # 配色、Frame、缓动 pg/out/eo/eio、图表原语
 from components import *      # tile / vbars / line_chart / hline / val_panel / pct_stats / quote / xfade
+from fx import *              # count / fly / equation / split / drain / zoom / strike
+from fxplus import *          # camera / versus / timeline / ring / arrow / highlight / underline / waterfall / sankey / transition
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 
