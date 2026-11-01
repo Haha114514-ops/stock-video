@@ -1,0 +1,9 @@
+numpy
+pandas
+pillow
+matplotlib
+requests
+akshare
+edge-tts
+pymupdf
+playwright

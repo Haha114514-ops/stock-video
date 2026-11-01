@@ -15,7 +15,7 @@ W, H = 19.2, 10.8  # 1920x1080 @100dpi
 
 
 def setup():
-    plt.rcParams["font.sans-serif"] = ["Microsoft YaHei"]
+    plt.rcParams["font.sans-serif"] = ["Microsoft YaHei", "PingFang SC", "Hiragino Sans GB", "Noto Sans CJK SC"]
     plt.rcParams["axes.unicode_minus"] = False
 
 
@@ -90,7 +90,7 @@ def terminal(f, x, y, w, h, lines, step=0.040, fs=13.5):
     yy = y + h - 0.062
     for txt, c in lines:
         f.text(x + 0.018, yy, txt, color=c, fontsize=fs, va="center",
-               family=["Consolas", "Microsoft YaHei"], zorder=3)
+               family=["Consolas", "Menlo", "Microsoft YaHei", "PingFang SC"], zorder=3)
         yy -= step
 
 

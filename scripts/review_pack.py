@@ -3,7 +3,7 @@
 
     python review_pack.py <工程目录> [--video 成片.mp4] [--out 输出目录] [--facts facts.json]
 
-输出到 <工程>\\review\\（或 --out）：
+输出到 <工程>/review/（或 --out）：
   ch_XX.png      每章一张拼图：每句话开口后 1.5 秒一帧 + 章末一帧，帧上标成片时间（按 timeline.json 精确定位）
   审片包.md      片长与章节表、每章旁白全文、静止段（≥3 秒不动）、旁白数字和 facts.json 对账、带推断词的句子
 
@@ -11,8 +11,8 @@
 审片包.md 另有：旁白数字 ↔ facts 说法对照（facts.json 的 labels，见 components.put）、推算句、两组审片问题。
 """
 import os, sys, re, json, glob, runpy, subprocess
-
-FONT = 'C:/Windows/Fonts/msyhbd.ttc'
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import sysenv
 INFER = (r'信号|说明|意味着|因为|所以|导致|原因|看来|看起来|似乎|显然|一定|必然|推测|待验证|可能|等于|相当于|其实|'
          r'白得|白送|算进去|定价|市场(在|还在|先)|打不破|打破|解释不了')
 CALC = r'推算|假设|年化|大约|约\d|左右|花完|撑'
@@ -40,13 +40,13 @@ def scene_names(root, n):
 
 def grab(video, t, path):
     # -ss 放在 -i 前：按时间精确定位（不要用 fps 滤镜抽帧，它会取到约 10 秒后的画面）
-    r = run(['ffmpeg', '-v', 'error', '-y', '-ss', f'{t:.3f}', '-i', video, '-frames:v', '1', '-vf', 'scale=640:-1', path])
+    r = run(sysenv.ffmpeg('-v', 'error', '-y', '-ss', f'{t:.3f}', '-i', video, '-frames:v', '1', '-vf', 'scale=640:-1', path))
     return r.returncode == 0 and os.path.exists(path)
 
 
 def sheets(video, tl, names, out):
     from PIL import Image, ImageDraw, ImageFont
-    fnt = ImageFont.truetype(FONT, 22)
+    fp, fi = sysenv.font_file('b'); fnt = ImageFont.truetype(fp, 22, index=fi)
     tmp = os.path.join(out, '_f'); os.makedirs(tmp, exist_ok=True)
     paths = []
     for si, sc in enumerate(tl):
@@ -72,7 +72,7 @@ def sheets(video, tl, names, out):
 
 def freezes(video):
     # 只量内容区（y 120~920），裁掉片头条、字幕和进度条：字幕一直在换，整帧量会把"只有章标题"的十几秒算成在动
-    r = run(['ffmpeg', '-v', 'info', '-i', video, '-vf', 'crop=iw:ih*800/1080:0:ih*120/1080,freezedetect=n=0.001:d=3', '-an', '-f', 'null', '-'])
+    r = run(sysenv.ffmpeg('-v', 'info', '-i', video, '-vf', 'crop=iw:ih*800/1080:0:ih*120/1080,freezedetect=n=0.001:d=3', '-an', '-f', 'null', '-'))
     st = [float(x) for x in re.findall(r'freeze_start: ([\d.]+)', r.stderr)]
     du = [float(x) for x in re.findall(r'freeze_duration: ([\d.]+)', r.stderr)]
     return list(zip(st, du))
@@ -199,10 +199,12 @@ def main():
     a = sys.argv[1:]
     if not a: print(__doc__); return
     root = os.path.abspath(a[0])
-    video = a[a.index('--video') + 1] if '--video' in a else max(glob.glob(os.path.join(root, 'output', '*.mp4')), key=os.path.getmtime)
+    mp4s = glob.glob(os.path.join(root, 'output', '*.mp4'))
+    if '--video' not in a and not mp4s: sys.exit(f'{root}/output 里没有成片：先跑 python video.py mux，或用 --video 指定')
+    video = a[a.index('--video') + 1] if '--video' in a else max(mp4s, key=os.path.getmtime)
     out = a[a.index('--out') + 1] if '--out' in a else os.path.join(root, 'review')
     os.makedirs(out, exist_ok=True)
-    tl = json.load(open(os.path.join(root, 'timeline.json'), encoding='utf-8'))
+    with open(os.path.join(root, 'timeline.json'), encoding='utf-8') as fp: tl = json.load(fp)
     sc, total = tl['scenes'], tl['total']
     names, lines, M = scene_names(root, len(sc))
     if lines is None:

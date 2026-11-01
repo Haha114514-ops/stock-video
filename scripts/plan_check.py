@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """plan_check.py —— 文字方案交出去之前跑（57号补丁七）
 
-    python plan_check.py <工程目录>        读 <工程>\\文字方案.md 和 facts.json，结果写 <工程>\\plan_check.txt
+    python plan_check.py <工程目录>        读 <工程>/文字方案.md 和 facts.json，结果写 <工程>/plan_check.txt
 
 把原来成片后才查、或者只靠作者自觉的几条，挪到写代码之前：
   必须改（退出码 1）：

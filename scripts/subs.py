@@ -13,6 +13,10 @@
 import json
 import os
 import re
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from sysenv import SUB_FONT   # 字幕字体（libass 按名字找），按本机取
 
 PAD = 0.5          # 与 build_all 的段间静音一致
 PAUSE = 0.55       # 超过这个间隔才认为是"说话停顿"，允许字幕空窗
@@ -224,8 +228,8 @@ PlayResY: {sh}
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,Microsoft YaHei,{sub_fs},&H00FFFFFF,&H00FFFFFF,&HA0000000,&H60000000,0,0,0,0,100,100,0,0,1,2.2,1,2,{sub_mlr},{sub_mlr},{sub_mv},1
-Style: Pop,Microsoft YaHei,30,&H0017110D,&H00FFFFFF,&H0029B4F0,&H000D1117,1,0,0,0,100,100,0,0,3,3.5,0,2,40,40,40,1
+Style: Default,{SUB_FONT},{sub_fs},&H00FFFFFF,&H00FFFFFF,&HA0000000,&H60000000,0,0,0,0,100,100,0,0,1,2.2,1,2,{sub_mlr},{sub_mlr},{sub_mv},1
+Style: Pop,{SUB_FONT},30,&H0017110D,&H00FFFFFF,&H0029B4F0,&H000D1117,1,0,0,0,100,100,0,0,3,3.5,0,2,40,40,40,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text

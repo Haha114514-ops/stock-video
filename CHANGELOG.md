@@ -1,5 +1,30 @@
 # stock-video SKILL 沿革全录（51号起沿革外移至此，64号#9）
 
+## 57号补丁十六（2026-11-01）：fxplus.py，第二组动效工具，不规定用法
+- 起因：用户想要更多特效——镜头运动、对比、时间轴、手绘强调、瀑布图 / 桑基图、转场，并且"不要写死用法，让模型自由发挥"。
+- 原本想保证什么：画面员手里有足够多的表达手段，但不会因为规约里列了"什么时候用什么"而把每期做成一个样子；fx.py 原来"不做转场特效"的顾虑，改成"工具给全、用法交给内容"。
+- 改动：
+  - 新增 `scripts/fxplus.py`：`camera` / `cam_keys`（镜头推拉平移，只动内容、背景不动，字的位置一起换算）、`versus`（两数并排长出 / 对撞，差值、倍数、变化率可选）、`timeline`（扫描式时间轴，事件可挂到 `B.at`）、`ring` / `arrow` / `highlight` / `underline`（手绘感强调）、`waterfall`（瀑布图）、`sankey`（多列桑基图，按源 / 终点着色、可突出一条流）、`transition`（同一块画面 A → B：fade / wipe / slide / flip / iris / blinds；子画布记下的字并回主画布，对口型检查照常）。全部是纯函数，参数开放。
+  - `motion.py`：`setup(edge_fade=0.3)`，章节首尾黑场淡入淡出的秒数，0 关掉（章节自己做进出场）；默认值不变。
+  - `fx.py` 文档去掉"不做转场特效"一句，指向 fxplus；骨架加 `from fx import *`、`from fxplus import *`；`api_ref.py` 速查收录 fxplus。
+  - SKILL 第 4 步加一句工具清单，写明"不规定用法"；没有新增任何"必须用 / 什么时候用"的规则。
+- 实测：每种效果抽帧拼图检查；用骨架搭 6 章演示片（每章一种效果）跑 tts → preview → render → mux，对口型检查 0 处（camera / transition 下字的位置换算正确），出片 1 分 02 秒。
+
+## 57号补丁十五（2026-11-01）：能在 macOS 上跑，跟本机有关的设置集中到 sysenv.py
+- 起因：在 macOS 上装这个 skill，`motion.py` 一 import 就因为 `C:/Windows/Fonts/msyh.ttc` 不存在而失败；`review_pack.py` 同样；`build_v4.py` 写死 Windows 的 Chrome 路径，用 `"file:///" + 路径` 打开页面，中文路径和空格都没转义；Homebrew 的 ffmpeg 不带 libass，竖屏片最后一步烧字幕直接报错。
+- 原本想保证什么：别人拿到仓库，不管 Windows 还是 macOS，装好依赖就能做片，不用改脚本；作者在 Windows 上的行为不变（候选字体顺序 Windows 优先）。
+- 改动：
+  - 新增 `scripts/sysenv.py`：字体（macOS 苹方 + DIN Alternate，Windows 雅黑 + Bahnschrift，Linux 思源黑），字幕字体名，ffmpeg / ffprobe，渲染并行数；都可用环境变量覆盖（`STOCK_VIDEO_FONT_R/_B/_N`、`STOCK_VIDEO_SUB_FONT`、`STOCK_VIDEO_FFMPEG/_FFPROBE`、`STOCK_VIDEO_JOBS`）。`python scripts/sysenv.py` 打印本机实际值。
+  - `motion.py`：字体、ffmpeg 改从 sysenv 取；`render --jobs N`，默认 CPU 核数（最多 8）而不是写死 8；渲染块先写 `.part.mp4` 再改名，中途打断不会留下坏块被 `render resume` 跳过；concat 列表里路径的单引号转义；编码参数 `crf / preset / x264_threads` 进 `setup`；没跑 tts / render 就跑下一步时给中文提示；未知命令打印用法；srt 时间戳按毫秒取整；修掉 docstring 里 `\c` 的 SyntaxWarning。
+  - `templates/video_skeleton.py`：skill 目录依次试 `STOCK_VIDEO_SKILL` → 文件头 `<skill>` → 从工程目录往上找 `.claude/skills/stock-video` → `~/.claude/skills/stock-video`，工程放在装了 skill 的工作区里不用改路径。
+  - `build_v4.py`：浏览器依次试本机 Chrome、Edge、playwright 自带 chromium（`STOCK_VIDEO_BROWSER` 可指定）；页面用 `Path.as_uri()` 打开；配音按文本 / 语速 / 声音判断要不要重配（原来只看文件在不在，改了旁白会复用旧音频），带重试；时间轴 / cue / 页面改过就清掉旧帧重渲；ffmpeg 没带 libass 时不烧字幕，出 `final.mp4` + `final.srt` 并提示怎么换 ffmpeg；缺参数、缺 `web/index.html` 时给中文提示。
+  - `review_pack.py`：字体、ffmpeg 从 sysenv 取；`output/` 里没有成片时给中文提示（原来 `max()` 空列表报错）。
+  - `fetch_data.py`：北交所 2024 年起的新代码 920xxx 原来被当成沪市（`9` 开头），改为 92 开头归北交所；巨潮 PDF 走 https；缺参数打印用法；结束时列出失败项。`fetch_hk.py`：港股代码自动补足 5 位（3918 → 03918）；同样的参数检查和失败汇总。`report_cut.py`：缺参数打印用法。
+  - `subs.py` / `build_v3.py` / `theme.py`（旧管线）：字体按本机取，其余不动。
+  - 文档和模板里的路径分隔符 `\` 统一成 `/`（Windows 上 Python 和 PowerShell 都认）；README 加 macOS 安装步骤；新增 `requirements.txt`。
+- 没改：`gate_check.py` 末位候选里的作者本机路径、`calibrate.py` 的默认成片目录（都是停用的旧管线，前者只是最后的候选，后者有环境变量）。
+- 实测：macOS 13（Apple Silicon）+ Python 3.12：`sysenv.py` 取到苹方 / DIN；用骨架搭了两章的测试工程跑 tts → preview → render → mux 出片；review_pack 出审片包。
+
 ## 57号补丁十四（2026-11-01）：命门从这家公司自己的材料里找，不靠行业清单
 - 起因：用户指出好几期地产片都没讲土地。土储就在年报管理层讨论里，材料员也读了，但一路被筛掉：① SKILL 的命门清单里地产只写"负债到期、现金流"，主控照抄进任务书；② 材料员只交回 3~5 条最值得解释的线索，土储是一张平常的表，挤不进去；③ 主控不读原文；④ 深挖只挑"最反常的一项"，房企存货占大头是常态，又被跳过。用户更要紧的意见：靠作者懂行补清单没用，换一个谁都不熟的行业照样会漏——要能具体个股具体分析。
 - 原本想保证什么：观众看完知道这门生意的死活取决于什么，即使作者和 AI 都不熟这个行业；最重要的科目不会因为"不反常"被跳过。
