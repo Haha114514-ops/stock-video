@@ -5,6 +5,8 @@
 用法：python build_v3.py <工程目录>
 """
 import asyncio, glob, json, os, re, subprocess, sys, io
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from sysenv import SUB_FONT
 
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
 BASE = sys.argv[1] if len(sys.argv) > 1 else os.path.dirname(os.path.abspath(__file__))
@@ -162,7 +164,7 @@ PlayResY: {SH}
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,Microsoft YaHei,{SUB_FS},{INK_ASS},&H00FFFFFF,&H00FFFFFF,&H00000000,1,0,0,0,100,100,0,0,1,2.6,0,2,{SUB_MLR},{SUB_MLR},{SUB_MV},1
+Style: Default,{SUB_FONT},{SUB_FS},{INK_ASS},&H00FFFFFF,&H00FFFFFF,&H00000000,1,0,0,0,100,100,0,0,1,2.6,0,2,{SUB_MLR},{SUB_MLR},{SUB_MV},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text

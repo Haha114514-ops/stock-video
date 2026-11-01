@@ -9,7 +9,7 @@
   数字   px_raw / px_qfq 日线、value_em 估值序列、is/bs/cf 三大表长表、zygc 主营构成、fhps 分红、
          indicator_em 财务指标（141列：ROE/周转/毛利率/资产负债率，银行另有存款、贷款、不良率、拨备覆盖率等）、
          同行 comp_<代码>_is.csv / comp_<代码>_value.csv
-  原文   reports\\  最新一份年报 + 半年报 PDF（巨潮），由 report_cut.py 切成
+  原文   reports/  最新一份年报 + 半年报 PDF（巨潮），由 report_cut.py 切成
          <标题>_目录索引.md           —— 先读这个：各节起始页、切好的段（页码 / 字数）、清单里没切到的项
          <标题>_管理层讨论与分析.txt  —— 找"这家公司的命门"先读这个
          <标题>_附注_<科目>.txt       —— 所得税调整、有息负债各项、减值、投资收益、现金流量表补充资料、分部、期后事项等
@@ -26,11 +26,14 @@ import warnings; warnings.filterwarnings('ignore')
 import akshare as ak
 
 args = [a for a in sys.argv[1:] if not a.startswith('--')]
+if len(args) < 2 or not re.fullmatch(r'\d{6}', args[0]): sys.exit(__doc__)
 code, OUT, peers = args[0], args[1], args[2:]
 subs = [c for a in sys.argv[1:] if a.startswith('--sub=') for c in a[6:].split(',') if c]
 os.makedirs(OUT, exist_ok=True)
 log = {}
-def ex(c): return ('SH' if c.startswith(('6', '9')) else 'BJ' if c.startswith(('4', '8')) else 'SZ') + c
+def ex(c):
+    """交易所前缀：北交所 4 / 8 / 92 开头（2024 年起新代码 920xxx），沪市 6 / 900（B 股），其余深市"""
+    return ('BJ' if c.startswith(('4', '8', '92')) else 'SH' if c.startswith(('6', '9')) else 'SZ') + c
 
 def grab(name, fn, *a, **k):
     for i in range(3):
@@ -85,16 +88,18 @@ def fetch_reports():
             pdf = os.path.join(rdir, title + '.pdf')
             if not os.path.exists(pdf):
                 for ext in ('PDF', 'pdf'):   # 巨潮有的文件是小写 .pdf（招商蛇口 2026 半年报），大写 404
-                    url = f'http://static.cninfo.com.cn/finalpage/{day}/{aid}.{ext}'
+                    url = f'https://static.cninfo.com.cn/finalpage/{day}/{aid}.{ext}'
                     resp = requests.get(url, timeout=60, headers={'User-Agent': 'Mozilla/5.0'})
                     if resp.status_code != 404: break
                 resp.raise_for_status()
                 if not resp.content.startswith(b'%PDF'): raise ValueError('不是 PDF: ' + url)
-                open(pdf, 'wb').write(resp.content)
+                with open(pdf, 'wb') as fp: fp.write(resp.content)
             log[f'report_{cat}'] = f'（{day}）' + report_cut.cut(pdf, rdir, title, extra_notes)
             print('ok', log[f'report_{cat}'])
         except Exception as e:
             log[f'report_{cat}'] = 'FAIL: ' + repr(e)[:200]; print('fail', cat, repr(e)[:200])
 
 if '--no-reports' not in sys.argv: fetch_reports()
-json.dump(log, open(os.path.join(OUT, 'fetch_log.json'), 'w', encoding='utf-8'), ensure_ascii=False, indent=1)
+with open(os.path.join(OUT, 'fetch_log.json'), 'w', encoding='utf-8') as fp: json.dump(log, fp, ensure_ascii=False, indent=1)
+fails = [k for k, v in log.items() if str(v).startswith('FAIL')]
+if fails: print('失败项（详见 fetch_log.json）：', '、'.join(fails))

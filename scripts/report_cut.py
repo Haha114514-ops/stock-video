@@ -239,6 +239,7 @@ if __name__ == '__main__':
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
     args = [a for a in sys.argv[1:] if not a.startswith('--')]
     opt = dict(a[2:].split('=', 1) for a in sys.argv[1:] if a.startswith('--') and '=' in a)
+    if not args or not os.path.isfile(args[0]): sys.exit(__doc__)
     pdf = args[0]; out = args[1] if len(args) > 1 else os.path.dirname(os.path.abspath(pdf))
     title = opt.get('title') or os.path.splitext(os.path.basename(pdf))[0]
     print(cut(pdf, out, title, [k for k in opt.get('notes', '').split(',') if k]))
