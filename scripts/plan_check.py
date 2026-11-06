@@ -45,7 +45,11 @@ def parse(md):
         if cur is None or not line.strip().startswith('|'): continue
         cells = [c.strip() for c in line.strip().strip('|').split('|')]
         if '旁白' in cells:
-            cols = {k: cells.index(k) for k in ('旁白', '画面', '触发词') if k in cells}
+            # 表头可能带括注（"画面（出现 / 变化）"），按前缀认列
+            cols = {}
+            for i, c in enumerate(cells):
+                for k in ('旁白', '画面', '触发词'):
+                    if c.startswith(k) and k not in cols: cols[k] = i
             continue
         if not cols or not cells or not cells[0].isdigit(): continue
         get = lambda k: cells[cols[k]] if k in cols and cols[k] < len(cells) else ''
