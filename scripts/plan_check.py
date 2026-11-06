@@ -200,6 +200,7 @@ def main():
     sys.stdout.reconfigure(encoding='utf-8')
     print(head + ' → plan_check.txt')
     for x in must[:20]: print('  [必须改] ' + x)
+    if len(must) > 20: print(f'  …还有 {len(must) - 20} 条，见 plan_check.txt')
     return 1 if must else 0
 
 

@@ -554,7 +554,8 @@ def cmd_check():
     L = check_report(check_scenes())
     open(P('output', 'check.txt'), 'w', encoding='utf-8').write('\n'.join(L) or '无')
     print(f'对口型检查（念到的数字画面上有没有、除章标题外有没有内容、有没有空框、字太小、红绿没图例、示意没标）：{len(L)} 处 → output/check.txt')
-    for x in L: print('  ' + x)
+    for x in L[:12]: print('  ' + x)
+    if len(L) > 12: print(f'  …还有 {len(L) - 12} 处，见 output/check.txt')
 
 # ---------- 静止段（57号）：preview 阶段就按分镜函数抽帧查"3 秒以上不动" ----------
 # 判定和 review_pack 的 ffmpeg freezedetect 一致：只量内容区 y 120~920（字幕、进度条在换不算动），
@@ -692,7 +693,8 @@ def cmd_render(resume=False, only=None, jobs=None):
             skip_ok = (resume or only is not None) and (only is None or si not in only)   # --only 只重渲点名场景
             jobs_.append((si, a, min(sc['frames'], a + 240), p, skip_ok))
     with Pool(jobs or sysenv.jobs()) as pool:
-        for i, p in enumerate(pool.imap(render_chunk, jobs_)): print(f'{i + 1}/{len(jobs_)}', os.path.basename(p), flush=True)
+        for i, p in enumerate(pool.imap(render_chunk, jobs_)):   # 每 10 片报一次进度，不逐片刷屏
+            if (i + 1) % 10 == 0 or i + 1 == len(jobs_): print(f'{i + 1}/{len(jobs_)}', os.path.basename(p), flush=True)
     keep = {j[3] for j in jobs_}
     for fn in os.listdir(P('chunks')):                     # 清掉时间轴变动后多余的旧块
         fp = P('chunks', fn)
