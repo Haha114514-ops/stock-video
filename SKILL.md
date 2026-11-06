@@ -99,7 +99,7 @@ description: 个股/财经视频流水线（数据→故事→旁白→逐帧动
 
 ### 4. 做分镜（每章一个绘制函数）
 
-> 第 4、5 步由**画面员**按任务书第三节做，主控不在自己的对话里写 video.py。画面员开工只读文字方案、facts.json、本文件第 4、5 步和"已知坑"、`python scripts/api_ref.py` 的速查和骨架；video.py 第一次写完以后只做局部修改。
+> 第 4、5 步由**画面员**按任务书第三节做，主控不在自己的对话里写 video.py。画面员开工只读文字方案、facts（用 `facts_peek.py` 看键名和说法，不整份读）、本文件第 4、5 步和"已知坑"、`python scripts/api_ref.py` 的速查和骨架；video.py 第一次写完以后只做局部修改。
 
 把 `templates/video_skeleton.py` 复制成 `<工程>/video.py`。骨架会自己找 skill 目录（环境变量 `STOCK_VIDEO_SKILL` → 文件头填的 `<skill>` → 从工程目录往上找 `.claude/skills/stock-video` → `~/.claude/skills/stock-video`），工程放在装了 skill 的工作区里就不用改路径；找不到会直接报"找不到 skill 脚本"。结构：`import motion as M` + `from components import *`，每章一个 `def sN(f, t, B, T)`，最后 `M.setup(...)`（模块顶层）+ `M.cli()`。
 
