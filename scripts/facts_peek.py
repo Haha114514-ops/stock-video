@@ -4,6 +4,7 @@
   不带前缀：全部标量键。按日期的字典（如分红 div）折叠成一行，要看就带前缀 div。
   带前缀：只看以这些前缀开头的键（rev  val.pe  bs.cash）。
 列表永远只打印"长度 N"和首末两个日期（若是日期），不打印内容。
+也能看 report-compare 的 data/compare.json（科目多，带前缀查，如 利润表.营业收入）。
 主控看 facts 一律用本脚本，不要 print / cat 整份 facts.json。
 """
 import json
@@ -43,8 +44,8 @@ def leaves(v):
 
 
 def show(v):
-    if isinstance(v, float):
-        return f'{v:.6g}'
+    if isinstance(v, float):   # 大数写全（元为单位的科目），不用科学计数法丢位数
+        return f'{v:,.0f}' if abs(v) >= 1e6 else f'{v:.6g}'
     s = str(v)
     return s if len(s) <= 60 else s[:57] + '…'
 
@@ -114,7 +115,7 @@ def main():
     orphan = [k for k in labels if k not in keys and not any(k.startswith(f + '.') for f, kd, _ in out if kd == 'fold')]
     tail = f'共 {n} 个键（标量 {nval}，序列 {nlist}），有说法 {nlab}'
     if not pre:
-        tail += f'；facts.json 共 {leaves({k: v for k, v in d.items() if k not in META})} 个键'
+        tail += f'；{p.name} 共 {leaves({k: v for k, v in d.items() if k not in META})} 个键'
         if orphan:
             tail += f'；有说法没值 {len(orphan)} 个：{", ".join(orphan[:8])}' + ('…' if len(orphan) > 8 else '')
     print(tail)
