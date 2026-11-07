@@ -11,15 +11,17 @@ import os, sys, json
 
 def _find_skill():
     """skill 目录（SKILL.md 所在目录）：环境变量 STOCK_VIDEO_SKILL → 下面 <skill> 填的路径 →
-    从工程目录往上找 .claude/skills/stock-video → ~/.claude/skills/stock-video。工程放在装了 skill 的工作区里就不用改路径。"""
+    从工程目录往上找 .claude/skills、.opencode/skill(s) 下的 stock-video → 用户目录下 .claude/skills、.config/opencode/skill(s)。
+    工程放在装了 skill 的工作区里就不用改路径（Claude Code、OpenCode 都认）。"""
     here = os.path.dirname(os.path.abspath(__file__))
     cands = [os.environ.get('STOCK_VIDEO_SKILL'), r'<skill>']
     d = here
     while True:
-        cands.append(os.path.join(d, '.claude', 'skills', 'stock-video'))
+        cands += [os.path.join(d, *p, 'stock-video') for p in (('.claude', 'skills'), ('.opencode', 'skill'), ('.opencode', 'skills'))]
         if os.path.dirname(d) == d: break
         d = os.path.dirname(d)
-    cands.append(os.path.join(os.path.expanduser('~'), '.claude', 'skills', 'stock-video'))
+    hm = os.path.expanduser('~')
+    cands += [os.path.join(hm, *p, 'stock-video') for p in (('.claude', 'skills'), ('.config', 'opencode', 'skill'), ('.config', 'opencode', 'skills'))]
     for c in cands:
         if c and os.path.isfile(os.path.join(c, 'scripts', 'motion.py')): return c
     sys.exit('找不到 skill 脚本 scripts/motion.py：设环境变量 STOCK_VIDEO_SKILL=<skill 目录>，或把 video.py 里的 <skill> 换成 skill 目录')

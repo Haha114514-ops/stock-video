@@ -1,5 +1,14 @@
 # stock-video SKILL 沿革全录（51号起沿革外移至此，64号#9）
 
+## 57号补丁二十二（2026-11-07）：模型按档位写，不写模型名；骨架也认 OpenCode 的目录
+- 起因：规约正本在 OpenCode 目录，会被不同的 AI 平台用。补丁二十一写死了 `model: "sonnet"` 和"用主控同款（Opus）"，换到没有这两个模型、或不能给子代理选模型的平台，这条就失效了。
+- 原本想保证什么：便宜的活用便宜的模型（材料员照抄、画面员有脚本检查兜底），要判断的活（主控、口径审员）用最强的。这一条不该因为换平台失效。
+- 改动：
+  - `templates/子代理任务书.md` 开头和 SKILL 第 0 步：按角色写档位——**执行档**（材料员、画面员：当前平台较便宜、较快的模型）、**判断档**（主控、口径审员：当前平台最强的模型），理由照原来的保留。
+  - 任务书开头加"各平台怎么落地"对照表：Claude Code（执行档传 `model: "sonnet"`，判断档不传，继续用 SendMessage）、OpenCode（在 opencode 配置里给子代理设较便宜的模型，`opencode.json` 的 `agent` 段或 `.opencode/agent/<名字>.md` 的 `model:`，写法以 OpenCode 文档为准；继续用任务返回的会话 id）、不能给子代理选模型的平台（全部用默认模型，流程不变；不能继续就另起并把上一轮说明和结果一起发）。原来写在句子里的"Claude Code 用 SendMessage；OpenCode 用任务返回的会话 id"挪进表里。
+  - 全仓库 grep 只在 Claude Code 成立的写法（模型名、SendMessage、Agent / Task 工具名、`~/.claude` 路径、WebFetch 等）：除上面两处，还有骨架 `_find_skill` 只认 `.claude/skills`。改成也找 `.opencode/skill(s)/stock-video` 和用户目录下 `.config/opencode/skill(s)/`，SKILL 第 4 步那句同步；在一个只有 `.opencode/skill/stock-video` 的临时目录里实测能找到。README 已经分别写了 Claude Code / OpenCode 的安装位置，保留。CHANGELOG 里的历史记录不改。
+- 没改：report-compare（另一个会话在体检它，由它同步）；check 和强调相关的脚本（与平台无关）。
+
 ## 57号补丁二十一·附（2026-11-07）：plan_check 认表头也按前缀；中文报错不乱码；瀑布图每根柱可挂到旁白词上
 - 起因：给 report-compare 体检时在副本里实跑发现。
 - **plan_check 认表头**：补丁十九·附把"哪一列是画面"改成按前缀认，但"这一行是不是表头"仍是 `'旁白' in cells` 一字不差。表头写成"旁白（逐句）"，整份方案一句都读不到，后面的检查全变成假的（对比片报"三张表没讲到""没说未经审计"）。原本想保证什么：作者照模板写、表头带括注也能读。→ 认表头按前缀；某章一句都没读到就直接停，报出是哪几章，不再往下出假结果。爱美客文字方案新旧两版 plan_check.txt 逐字相同。
