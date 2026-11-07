@@ -234,9 +234,11 @@ def overlay(f, q, alpha=0.85):
     if q > 0: f.rect((0, 120, W, 920), (6, 10, 22), alpha * q)
     if q > 0.3 and f.rec is not None: f.cover = len(f.rec)
 
-def glow(f, box, k, col=None, r=10, pad=28):
+def glow(f, box, k, col=None, r=10, pad=28, grow=0.0, edge=False):
     """让一块已经画好的元素本身亮起来（57号补丁二十一）：box 内像素提亮 + 外面一圈柔光。不加框、不贴标签。
-    k = 强度 0~1；col 给了就在 box 内薄铺一层这个色（box 底下是深色背景时也看得出亮）。在这块元素画完之后调用。"""
+    k = 强度 0~1；col 给了就在 box 内薄铺一层这个色（box 底下是深色背景时也看得出亮）；
+    grow = 这块放大的比例（0.05 = 放大 5%），edge = 沿这块边缘描一圈细亮边。在这块元素画完之后调用。
+    样子见 docs/强调_用户认可样式.png：整段亮起、略放大、细亮边，其余压暗。"""
     if k <= 0.01: return
     x0, y0, x1, y1 = [int(round(v)) for v in box]
     X0, Y0, X1, Y1 = max(0, x0 - pad), max(0, y0 - pad), min(W, x1 + pad), min(H, y1 + pad)
@@ -256,6 +258,13 @@ def glow(f, box, k, col=None, r=10, pad=28):
     halo = np.asarray(Image.fromarray(np.clip(src, 0, 255).astype(np.uint8)).filter(ImageFilter.GaussianBlur(12)), np.float32)
     a2 = a2 + halo * 0.6 * k * (1 - 0.7 * mi)
     f.im.paste(Image.fromarray(np.clip(a2, 0, 255).astype(np.uint8)), (X0, Y0))
+    if grow > 0 or edge:
+        s_ = 1 + grow * k; cw, ch = x1 - x0, y1 - y0; nw, nh = max(1, round(cw * s_)), max(1, round(ch * s_))
+        bx = (x0 - (nw - cw) // 2, y0 - (nh - ch) // 2); rr = max(0, min(r, nh // 2, nw // 2))
+        if nw != cw or nh != ch:
+            mk = Image.new('L', (nw, nh), 0); ImageDraw.Draw(mk).rounded_rectangle((0, 0, nw - 1, nh - 1), rr, fill=255)
+            f.im.paste(f.im.crop((x0, y0, x1, y1)).resize((nw, nh), Image.LANCZOS), bx, mk)
+        if edge: f.rect((bx[0], bx[1], bx[0] + nw - 1, bx[1] + nh - 1), None, 0, r=rr, outline=(255, 244, 214), ow=2, oa=0.85 * k)
 
 # ---------- 背景 ----------
 _BG = None
@@ -276,7 +285,7 @@ def background():
 
 # ---------- 工程配置 ----------
 C = dict(root=None, name='', code='', source='', voice='zh-CN-YunyangNeural', rate='+6%',
-         lead=0.7, gap=0.35, tail=1.0, scenes=[], out_name='final.mp4', music=0.075, sub_size=44, spotlight=True, spot_dim=0.32,
+         lead=0.7, gap=0.35, tail=1.0, scenes=[], out_name='final.mp4', music=0.075, sub_size=44, spotlight=True, spot_dim=0.5,
          crf=18, preset='medium', x264_threads=3,      # 编码参数：要更快出片可在 setup 里传 preset='veryfast'
          edge_fade=0.3)                                # 每章首尾淡入淡出黑场的秒数；0 = 不淡，章节自己做进出场（如 fxplus.transition）
 def setup(**kw):
@@ -533,7 +542,8 @@ def spotlight(f, si, t, sc):
     # 改成字所在的那一块整体提亮 + 柔光，慢呼吸
     for bx, st, env in lit:
         b = 0.5 - 0.5 * math.cos(2 * math.pi * max(0, t - st - 0.55) / 2.4)
-        glow(f, bx, env * (0.8 + 0.2 * b))
+        blk = (bx[2] - bx[0]) * (bx[3] - bx[1]) > 0 and any(bx == b_ for b_, _ in f.blocks or [])
+        glow(f, bx, env * (0.8 + 0.2 * b), grow=0.05 if blk else 0.0, edge=blk)
 
 # ---------- 对口型检查：念到的东西，画面上有没有 ----------
 # 不渲染，按每条字幕念完前的时刻跑一遍分镜函数，看画面上记下的字。
