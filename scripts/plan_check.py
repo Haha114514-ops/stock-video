@@ -44,8 +44,8 @@ def parse(md):
             cur = (h.group(1), h.group(2).strip(), []); chs.append(cur); cols = None; continue
         if cur is None or not line.strip().startswith('|'): continue
         cells = [c.strip() for c in line.strip().strip('|').split('|')]
-        if '旁白' in cells:
-            # 表头可能带括注（"画面（出现 / 变化）"），按前缀认列
+        if any(c.startswith('旁白') for c in cells):
+            # 表头可能带括注（"旁白（逐句）""画面（出现 / 变化）"），认表头和认列都按前缀
             cols = {}
             for i, c in enumerate(cells):
                 for k in ('旁白', '画面', '触发词'):
@@ -116,6 +116,7 @@ def business(md, chs, lines):
 
 
 def main():
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')   # 开头就切：前面几处报错也是中文
     if len(sys.argv) < 2: print(__doc__); return 0
     root = os.path.abspath(sys.argv[1])
     md_p = os.path.join(root, '文字方案.md')
@@ -123,6 +124,9 @@ def main():
     md = open(md_p, encoding='utf-8').read()
     chs = parse(md)
     if not chs: print('文字方案里没读到"### NN 章名"和旁白表格'); return 2
+    empty = [f'{no} {name}' for no, name, rows in chs if not rows]
+    if empty:   # 表头认不出时整章读不到，后面的检查会全变成假的"没讲到"
+        print('这几章读不到旁白行（表头要有以"旁白"开头的列，每行第一格是序号）：' + '、'.join(empty)); return 2
     fp = os.path.join(root, 'facts.json')
     facts = json.load(open(fp, encoding='utf-8')) if os.path.exists(fp) else {}
     smax = R.still_max()
@@ -197,7 +201,6 @@ def main():
           ['', '## 长句（建议拆，不强制）'] + [f'- {x}' for x in longs or ['无']] + \
           ['', '## 旁白数字 ↔ facts 说法（给口径审员）'] + (ref or ['- 无（没有 facts.json 或没对上的数）'])
     open(os.path.join(root, 'plan_check.txt'), 'w', encoding='utf-8').write('\n'.join(out))
-    sys.stdout.reconfigure(encoding='utf-8')
     print(head + ' → plan_check.txt')
     for x in must[:20]: print('  [必须改] ' + x)
     if len(must) > 20: print(f'  …还有 {len(must) - 20} 条，见 plan_check.txt')

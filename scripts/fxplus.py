@@ -256,10 +256,12 @@ def underline(f, t, t0, x0, x1, y, col=GOLD, w=4, d=0.45, a=1.0, wobble=3.0, see
 def waterfall(f, t, t0, box, steps, stagger=0.55, d=0.6, vmax=None, vmin=None, fmt='{:.0f}', a=1.0, total_col=GOLD,
               up_col=RED, down_col=GREEN, connectors=True, lsize=22, vsize=26, bar=0.58, signed=True):
     """瀑布图：steps = [(标签, 值, 种类), ...]，种类 'total' 从 0 画到值（值写 None 就取前面累计的结果），
-    'delta'（默认，可省）从当前累计往上加 / 往下减——减项从上一根的水平线往下长。第 i 根在 t0 + i*stagger 开始。
+    'delta'（默认，可省）从当前累计往上加 / 往下减——减项从上一根的水平线往下长。第 i 根在 t0 + i*stagger 开始；
+    t0 也可以是列表（每根一个开始时刻，如 [B.at(2,'收入'), B.at(2,'毛利率'), …]），这样每根柱挂到旁白念到它的那个词上。
     颜色：总量 total_col，加项 up_col，减项 down_col（默认红加绿减；红绿表示好坏时记得配 components.legend）。
     signed=True 增减项数字带 +/−。返回 [(柱中心 x, 柱顶 y, 柱底 y), ...]。"""
     if a <= 0.01: return []
+    t_at = (lambda i: t0[min(i, len(t0) - 1)]) if isinstance(t0, (list, tuple)) else (lambda i: t0 + i * stagger)
     rows, cur = [], 0.0
     for st in steps:
         lab, v = st[0], st[1]; kind = st[2] if len(st) > 2 else 'delta'
@@ -274,7 +276,7 @@ def waterfall(f, t, t0, box, steps, stagger=0.55, d=0.6, vmax=None, vmin=None, f
     Y = lambda v: ymap(box, v, vmin, vmax); out_ = []
     if vmin < 0: f.line([(x0, Y(0)), (x1, Y(0))], GRID, 1, 0.6 * a)
     for i, (lab, frm, to, v, kind) in enumerate(rows):
-        cx = x0 + slot * (i + 0.5); p = eio(pg(t, t0 + i * stagger, d)) if t >= t0 + i * stagger else 0.0
+        cx = x0 + slot * (i + 0.5); p = eio(pg(t, t_at(i), d)) if t >= t_at(i) else 0.0
         c = total_col if kind == 'total' else (up_col if v >= 0 else down_col)
         end = lerp(frm, to, p); ya, yb = Y(frm), Y(end)
         top, bot = min(ya, yb), max(ya, yb); out_.append((cx, min(Y(frm), Y(to)), max(Y(frm), Y(to))))
@@ -285,7 +287,7 @@ def waterfall(f, t, t0, box, steps, stagger=0.55, d=0.6, vmax=None, vmin=None, f
         ty = (top - 20) if (kind == 'total' or v >= 0) else (bot + 22)
         f.text((cx, ty), s, vsize, TXT if kind == 'total' else c, a * clamp(p * 2 - 0.6), 'n', 'mm')
         if connectors and i + 1 < n and p >= 1:
-            q = pg(t, t0 + i * stagger + d, 0.3); yc = Y(to)
+            q = pg(t, t_at(i) + d, 0.3); yc = Y(to)
             f.dash(cx + bw / 2, yc, cx + bw / 2 + (slot - bw) * q, yc, SUB, 2, 0.7 * a, 6, 5)
     return out_
 

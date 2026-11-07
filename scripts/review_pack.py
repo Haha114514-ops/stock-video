@@ -196,6 +196,7 @@ def redlines(lines_by_scene, pics):
 
 
 def main():
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')   # Windows 管道默认 GBK，中文进度会乱码
     a = sys.argv[1:]
     if not a: print(__doc__); return
     root = os.path.abspath(a[0])
