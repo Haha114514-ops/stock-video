@@ -2,7 +2,7 @@
 """fx.py —— 有含义的动效（56号补丁起）。from fx import *
 
 motion.py 原有的动效几乎都是"在原地出现"（淡入、柱子长高、描线）。这里补的是"动作本身就在讲话"的几种：
-每个动效对应一种财务上的意思，用到时旁白正好在说这件事。镜头、对比、时间轴、手绘强调、瀑布图、桑基图、转场在 fxplus.py。
+每个动效对应一种财务上的意思，用到时旁白正好在说这件事。镜头、对比、时间轴、强调（元素本身提亮）、瀑布图、桑基图、转场在 fxplus.py。
 
     count   数字变成另一个数       "市盈率从 4.1 倍变成 7.9 倍"
     fly     一个数从图上飞进算式   "拿这个数来算"
@@ -24,10 +24,15 @@ def _bump(p):
     return math.sin(math.pi * clamp((p - 0.7) / 0.3)) if p < 1 else 0.0
 
 
-def count(f, t, t0, xy, v0, v1, fmt='{:.1f}', size=64, c0=GOLD, c1=GOLD, d=1.2, a=1.0, anchor='mm', ghost=True):
+def count(f, t, t0, xy, v0, v1, fmt='{:.1f}', size=64, c0=GOLD, c1=GOLD, d=1.2, a=1.0, anchor='mm', ghost=True, show0=False):
     """数字从 v0 滚到 v1，颜色从 c0 渐到 c1；ghost=True 时滚动开始后，旧值缩小移到左边、带一个箭头，
-    表示"原来是这个数"（xy 是新值的中心，anchor 只支持 'mm'）。t < t0 时显示 v0。返回进度 p。"""
-    if a <= 0.01: return 0.0
+    表示"原来是这个数"（xy 是新值的中心，anchor 只支持 'mm'）。t < t0 时显示 v0；v0 是 0 时 t < t0 不画
+    （观众会把 0 当真数；0 本身有意义时传 show0=True）。fmt 里的 {:g} 按终值的小数位滚，不露长小数。返回进度 p。"""
+    if a <= 0.01 or (v0 == 0 and t < t0 and not show0): return 0.0
+    for g_ in ('{:g}', '{:+g}'):                     # 57号补丁二十一：晨光滚动中露出"0.76058元"
+        if g_ in fmt:
+            e = g_.format(v1); dc = len(e.split('.')[1]) if '.' in e else 0
+            fmt = fmt.replace(g_, g_[:-2] + f'.{dc}f}}')
     p = eio(pg(t, t0, d)) if t >= t0 else 0.0
     v = lerp(v0, v1, p); s = size * (1 + 0.10 * _bump(p))
     if ghost and p > 0:

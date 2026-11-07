@@ -13,16 +13,17 @@ r"""motion.py —— 暗色个股片的逐帧动画引擎（52号起的唯一渲
     if __name__ == '__main__': M.cli()
 
 命令：tts → preview → render → mux（all 一次跑完；render resume 断点续渲；render --jobs 4 指定并行数）
-check（preview 末尾自动跑）：不渲染，列出"念到的数字画面上没有""除章标题外什么都没有""空框"，写 output/check.txt
+check（preview 末尾自动跑）：不渲染，列出"念到的数字画面上没有""除章标题外什么都没有""空框"
+"数字滚动前先显示 0""滚动中露出长小数""video.py 写死 facts 里的数 / 手写算式"，写 output/check.txt
 动画的基本写法：a = pg(t, B[2])  →  第 3 句开口时开始、0.7 秒内从 0 缓动到 1，用来控制透明度/长度/数字。
 长句里的第二、三个意思挂到它被念到的那一刻：pg(t, B.at(2, '6.5%')) = 第 3 句念到"6.5%"时；
 B.S[2][1] = 第 3 句第 2 条字幕开口时（字幕在逗号处切）。
-引擎自动做的"讲到谁亮谁"：字幕念到的数字 / 短标签如果早已在画面上，给它金色底光 + 慢呼吸、其余内容稍退，
-这条字幕念完淡出（setup(spotlight=False) 关掉）。
+引擎自动做的"讲到谁亮谁"：字幕念到的数字 / 短标签如果早已在画面上，它所在的那一块（色条的一段、柱子；
+不在色块上就是字本身）整体提亮、带柔光，其余内容稍退；不加框、不贴标签。这条字幕念完淡出（setup(spotlight=False) 关掉）。
 """
 import os, sys, json, math, re, asyncio, subprocess, wave
 import numpy as np
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageFilter
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import sysenv
 
@@ -95,8 +96,11 @@ class Frame:
         return self.d.textlength(s, font=font(size, kind))
     fills = None        # check 期间记下画过的红 / 绿色块（查"红绿同屏没图例"）
     legend = False      # components.legend 画过图例就置 True
+    blocks = None       # 分镜绘制期间记下实心色块（给"讲到谁亮谁"找字所在的那一段）
     def rect(self, box, col, a=1.0, r=0, outline=None, ow=2, oa=None):
         if a <= 0.01 and not (outline and (oa or 0) > 0.01): return
+        if self.blocks is not None and col and a > 0.5 and tuple(col[:3]) != CARD:
+            self.blocks.append((tuple(box), len(self.rec or [])))
         if self.fills is not None and col and a > 0.5:
             rr, gg, bb = col[:3]
             if rr > gg + 60 and rr > bb + 60: self.fills.add('红')
@@ -230,6 +234,29 @@ def overlay(f, q, alpha=0.85):
     if q > 0: f.rect((0, 120, W, 920), (6, 10, 22), alpha * q)
     if q > 0.3 and f.rec is not None: f.cover = len(f.rec)
 
+def glow(f, box, k, col=None, r=10, pad=28):
+    """让一块已经画好的元素本身亮起来（57号补丁二十一）：box 内像素提亮 + 外面一圈柔光。不加框、不贴标签。
+    k = 强度 0~1；col 给了就在 box 内薄铺一层这个色（box 底下是深色背景时也看得出亮）。在这块元素画完之后调用。"""
+    if k <= 0.01: return
+    x0, y0, x1, y1 = [int(round(v)) for v in box]
+    X0, Y0, X1, Y1 = max(0, x0 - pad), max(0, y0 - pad), min(W, x1 + pad), min(H, y1 + pad)
+    if X1 - X0 < 2 or Y1 - Y0 < 2 or x1 <= x0 or y1 <= y0: return
+    reg = f.im.crop((X0, Y0, X1, Y1)); a = np.asarray(reg, np.float32)
+    m = Image.new('L', reg.size, 0)
+    ImageDraw.Draw(m).rounded_rectangle((x0 - X0, y0 - Y0, x1 - X0 - 1, y1 - Y0 - 1), max(0, min(r, (y1 - y0) // 2, (x1 - x0) // 2)), fill=255)
+    mi = np.asarray(m, np.float32)[..., None] / 255
+    lum = a.mean(axis=2, keepdims=True) / 255         # 按亮度加权：色块变亮，压在上面的深色字不变灰
+    w = np.clip((lum - 0.2) / 0.3, 0, 1) * lum       # 深色底几乎不动，免得提出一个灰框
+    lit = a * (1 + 0.12 * k * w); lit = lit + (255 - np.minimum(lit, 255)) * 0.16 * k * w
+    if col: lit = lit + np.array(col, np.float32) * 0.10 * k
+    elif (lum * mi).sum() / max(1, mi.sum()) < 0.3:     # 深色底上的字（不在色块上）：字本身转成金色，金色 = 重点
+        g = np.clip((lum - 0.35) / 0.4, 0, 1); lit = lit + (np.array(GOLD, np.float32) - lit) * 0.75 * k * g
+    a2 = a * (1 - mi) + lit * mi
+    src = a2 * mi * np.clip((lum - 0.25) / 0.3, 0, 1)   # 柔光只从亮的像素（色块、字）发出，深色底不发灰
+    halo = np.asarray(Image.fromarray(np.clip(src, 0, 255).astype(np.uint8)).filter(ImageFilter.GaussianBlur(12)), np.float32)
+    a2 = a2 + halo * 0.6 * k * (1 - 0.7 * mi)
+    f.im.paste(Image.fromarray(np.clip(a2, 0, 255).astype(np.uint8)), (X0, Y0))
+
 # ---------- 背景 ----------
 _BG = None
 def background():
@@ -249,7 +276,7 @@ def background():
 
 # ---------- 工程配置 ----------
 C = dict(root=None, name='', code='', source='', voice='zh-CN-YunyangNeural', rate='+6%',
-         lead=0.7, gap=0.35, tail=1.0, scenes=[], out_name='final.mp4', music=0.075, sub_size=44, spotlight=True, spot_dim=0.22,
+         lead=0.7, gap=0.35, tail=1.0, scenes=[], out_name='final.mp4', music=0.075, sub_size=44, spotlight=True, spot_dim=0.32,
          crf=18, preset='medium', x264_threads=3,      # 编码参数：要更快出片可在 setup 里传 preset='veryfast'
          edge_fade=0.3)                                # 每章首尾淡入淡出黑场的秒数；0 = 不淡，章节自己做进出场（如 fxplus.transition）
 def setup(**kw):
@@ -425,7 +452,7 @@ def beats_of(sc, si=None):
     return sc['_B']
 
 # ---------- 讲到谁亮谁 ----------
-# 字幕切到下一个子句时，如果这句念到的数字已经在画面上（之前就画好了），给它一层金色底光并慢呼吸，
+# 字幕切到下一个子句时，如果这句念到的数字已经在画面上（之前就画好了），它所在的那一块整体提亮、带柔光并慢呼吸，
 # 直到这条字幕念完。新出现的元素不加（它自己的出场动画就是强调）。观众的眼睛跟着声音走，长句也不会整段僵住。
 _NUM = re.compile(r'(?<![\d.])(\d+(?:\.\d+)?)(?![\d.])')
 def _spoken_nums(s):
@@ -469,14 +496,22 @@ def _spot_keys(si, k, sc):
                 if s not in keep: keep.append(s)
         _SPOT[key] = keep[:2]
     return _SPOT[key]
+def _home(f, box, i):
+    """字所在的那一块：在它之前画的、包住字中心的最小实心色块（色条的一段、柱子）；不在色块上就是字本身"""
+    cx, cy = (box[0] + box[2]) / 2, (box[1] + box[3]) / 2; best = None
+    for b, j in f.blocks or []:
+        if j > i or not (b[0] <= cx <= b[2] and b[1] <= cy <= b[3]): continue
+        ar = (b[2] - b[0]) * (b[3] - b[1])
+        if ar <= W * 800 * 0.25 and (best is None or ar < best[0]): best = (ar, b)
+    return best[1] if best else (box[0] - 6, box[1] - 4, box[2] + 6, box[3] + 4)
 def spotlight(f, si, t, sc):
     subs = sc['subs']
     k = max((i for i, (s0, _, _) in enumerate(subs) if s0 <= t), default=None)
     if k is None: return
     cur = _spot_keys(si, k, sc); prev = _spot_keys(si, k - 1, sc) if k > 0 else []
     boxes = {}
-    for s, box, a, size in f.rec[f.cover:]:
-        if a > 0.9 and s not in boxes: boxes[s] = box
+    for i, (s, box, a, size) in enumerate(f.rec):
+        if i >= f.cover and a > 0.9 and s not in boxes: boxes[s] = _home(f, box, i)
     lit = []
     for s in set(cur) | set(prev):
         if s not in boxes: continue
@@ -492,12 +527,13 @@ def spotlight(f, si, t, sc):
     dim = max(e for _, _, e in lit) * C['spot_dim']
     if dim > 0.01:
         box = (0, 120, W, 920); m = Image.new('L', (W, 800), int(255 * dim)); md = ImageDraw.Draw(m)
-        for (x0, y0, x1, y1), _, e in lit: md.rounded_rectangle((x0 - 18, y0 - 132, x1 + 18, y1 - 108), 12, fill=int(255 * dim * (1 - e)))
+        for (x0, y0, x1, y1), _, e in lit: md.rounded_rectangle((x0 - 8, y0 - 128, x1 + 8, y1 - 112), 12, fill=int(255 * dim * (1 - e)))
         f.im.paste(background().crop(box), box, m)
-    for (x0, y0, x1, y1), st, env in lit:
-        px, py = 14, 8; b = 0.5 - 0.5 * math.cos(2 * math.pi * max(0, t - st - 0.55) / 2.4)
-        f.rect((x0 - px, y0 - py, x1 + px, y1 + py), GOLD, (0.10 + 0.08 * b) * env, r=10, outline=GOLD, ow=2, oa=(0.75 - 0.3 * b) * env)
-        f.rect((x0 - px + 6, y1 + py + 4, x0 - px + 6 + (x1 - x0 + 2 * px - 12) * eo((t - st - 0.1) / 0.6), y1 + py + 8), GOLD, 0.9 * env, r=2)
+    # 57号补丁二十一：不再在字外面套金色底框（金色条上会变成"更亮的金色小标签"，用户说很 low），
+    # 改成字所在的那一块整体提亮 + 柔光，慢呼吸
+    for bx, st, env in lit:
+        b = 0.5 - 0.5 * math.cos(2 * math.pi * max(0, t - st - 0.55) / 2.4)
+        glow(f, bx, env * (0.8 + 0.2 * b))
 
 # ---------- 对口型检查：念到的东西，画面上有没有 ----------
 # 不渲染，按每条字幕念完前的时刻跑一遍分镜函数，看画面上记下的字。
@@ -508,7 +544,7 @@ def _shown(n, vals):
     return any(v == c or (dc >= 1 and round(v, dc) == c) or (dc == 0 and c >= 10 and abs(v - c) <= 0.5) for v in vals)
 _SCHEMA = re.compile(r'(公司|项目|子公司|门店|业务)\s?[A-Z甲乙丙](?![A-Za-z])')
 def check_scenes():
-    """返回 [(章, 字幕序号, 章内秒, 类别, 说明)]。类别：只有标题 / 数字没上画面 / 空框 / 字太小 / 红绿没图例 / 示意没标"""
+    """返回 [(章, 字幕序号, 章内秒, 类别, 说明)]。类别：只有标题 / 数字没上画面 / 空框 / 字太小 / 红绿没图例 / 示意没标 / 滚动前显示0 / 滚动露长小数 / 写死的数（章为 None）"""
     tl, total = load_tl(); out_ = []
     for si, sc in enumerate(tl):
         B = beats_of(sc, si); fn = C['scenes'][si][2]; seen = set()
@@ -537,12 +573,117 @@ def check_scenes():
                 if not any(x0 <= (b[0] + b[2]) / 2 <= x1 and y0 <= (b[1] + b[3]) / 2 <= y1 for _, b in con):
                     out_.append((si, k, s0, '空框', f'框 {int(x0)},{int(y0)}–{int(x1)},{int(y1)} 里还没有字｜{txt}')); break
     NOW[0] = 0
-    return out_
+    return out_ + check_zero() + check_source()
+
+# ---------- 数字滚动前先显示 0 / 滚动中露出长小数（57号补丁二十一） ----------
+# 晨光那期出了 9 处：业务卡在前三句一直是"0.00亿"、"最低 0.00 / 现价 0.00"，观众会当成真实数字；另有"0.76058元"。
+# 按 ZERO_STEP 秒的网格跑分镜函数（不渲染），同一位置、同一格式的字先是 0、后来变成非 0 的，就是滚动前露了 0。
+ZERO_STEP = 0.5
+def _zero_scene(si):
+    tl, _ = load_tl(); sc = tl[si]; B = beats_of(sc, si); fn = C['scenes'][si][2]; occ = []
+    for n in range(int(sc['T'] / ZERO_STEP) + 1):
+        t = n * ZERO_STEP; f = Frame(background()); f.rec = []; NOW[0] = t
+        fn(f, t, B, sc['T'])
+        for s, (x0, y0, x1, y1), a, _ in f.rec[f.cover:]:
+            if a < 0.5 or _cjk(s) > 6: continue
+            ns = [e for e in _NUM.findall(s) if not (len(e) > 1 and e[0] == '0' and '.' not in e)]
+            if ns: occ.append((t, _NUM.sub('#', s), (x0 + x1) / 2, (y0 + y1) / 2, s, ns, x0, x1))
+    NOW[0] = 0
+    # 同一个元素：格式一样、同一行，中心 / 左端 / 右端之一对得上（滚数时宽度会变）
+    same = lambda p, q: p[1] == q[1] and abs(p[3] - q[3]) < 10 and (abs(p[2] - q[2]) < 40 or abs(p[6] - q[6]) < 6 or abs(p[7] - q[7]) < 6)
+    isz = lambda o: all(float(e) == 0 for e in o[5])
+    zero, longd = {}, {}
+    for i, o in enumerate(occ):
+        later = [q for q in occ[i + 1:] if q[0] > o[0] and same(o, q)]
+        if isz(o):
+            # 变成非 0 的那一刻，原位置上的 0 已经不在了（还在的话是两个不同的字，比如坐标轴的 0 和年份）
+            nz = next((q for q in later if not isz(q) and not any(z[0] == q[0] and isz(z) and same(o, z) for z in occ)), None)
+            if nz: zero.setdefault((o[1], round(o[3] / 16), round(o[2] / 60)), []).append((o[0], o[4], nz))
+        if any('.' in e and len(e.split('.')[1]) >= 4 for e in o[5]) and (o[1], round(o[3] / 16)) not in longd:
+            fin = later[-1] if later else None
+            if fin and fin[4] != o[4]: longd[(o[1], round(o[3] / 16))] = (o[0], o[4], fin)
+    li = lambda t: max([i for i, b in enumerate(B) if b <= t + 1e-6] or [0]) + 1
+    rows = []
+    for v in zero.values():
+        if len(v) < 2: continue                          # 只闪一下（滚动起步那一帧）不报，露 0 超过半秒才报
+        t0, s, nz = v[0]
+        rows.append((si, li(t0) - 1, t0, '滚动前显示0', f'第 {li(t0)} 句起「{s}」露 0 约 {len(v) * ZERO_STEP:.1f} 秒，'
+                     f'{nz[0]:.1f} 秒后才是非 0——没念到前先别画（fx.count 从 0 起滚时 t<t0 自动不画），或出现时就是终值'))
+    for t0, s, fin in longd.values():
+        rows.append((si, li(t0) - 1, t0, '滚动露长小数', f'第 {li(t0)} 句「{s}」，停下来是「{fin[4]}」——fmt 写定小数位，不用 {{:g}}'))
+    return rows
+def check_zero():
+    """各章按 ZERO_STEP 网格查"数字滚动前先显示 0""滚动中露出长小数"（多进程，不渲染）"""
+    from multiprocessing import Pool
+    tl, _ = load_tl(); mf = getattr(sys.modules.get('__main__'), '__file__', '') or ''
+    if os.path.abspath(mf) == os.path.abspath(P('video.py')):      # video.py 直接跑：子进程能重新 import 分镜
+        with Pool(min(sysenv.jobs(), len(tl))) as pool: res = pool.map(_zero_scene, range(len(tl)))
+    else: res = [_zero_scene(si) for si in range(len(tl))]          # review_pack 用 runpy 读进来的：单进程
+    return [r for rs in res for r in rs]
+
+# ---------- video.py 写死的数（57号补丁二十一） ----------
+# 晨光那期：瀑布图累计值写成一串 [100, 18.36, 10.94, …]、角注写成"推算：278 − 前三季度 180.1"。值都对，但改 facts 不会跟着变。
+_OPS = re.compile(r'\d\s*(?:[−×÷=≈]|\s[-+/]\s)\s*[^\d{}]{0,8}?\d')
+def _facts_nums(d, path=''):
+    if isinstance(d, bool): return []
+    if isinstance(d, (int, float)): return [(float(d), path)]
+    if isinstance(d, dict): return [x for k, v in d.items() for x in _facts_nums(v, f'{path}.{k}' if path else str(k))]
+    if isinstance(d, list) and len(d) <= 12: return [x for i, v in enumerate(d) for x in _facts_nums(v, f'{path}[{i}]')]
+    return []
+def _fact_of(txt, fnums):
+    """txt 是一个数的写法，按它写出的小数位和 facts 比；找到返回 facts 里的键"""
+    v = float(txt); dc = len(txt.split('.')[1]) if '.' in txt else 0
+    for fv, k in fnums:
+        if fv == v or (dc and round(fv, dc) == v): return k
+def check_source(path=None):
+    """静态扫 video.py：facts.json 里已有的数写成字面量、一串手写数、手写算式角注（旁白原句和 B.at 触发词不算）"""
+    import ast
+    path = path or P('video.py')
+    try: src = open(path, encoding='utf-8').read(); tree = ast.parse(src)
+    except Exception: return []
+    try: fnums = _facts_nums(json.load(open(P('facts.json'), encoding='utf-8')))
+    except Exception: fnums = []
+    skip = set()                                          # 旁白原句、B.at(句, '0.85亿元') 的触发词、文档字符串：本来就要念数，不算写死
+    narr = {ln.strip() for sc in C['scenes'] for ln in sc[1]}
+    for nd in ast.walk(tree):
+        # 旁白里原样有的片段（多半是先放进列表、再传给 B.at 的触发词）也跳过；画面上的标题、角注一般不和旁白逐字相同
+        if isinstance(nd, ast.Constant) and isinstance(nd.value, str) and nd.value.strip() and any(nd.value.strip() in x for x in narr): skip.add(id(nd))
+        if isinstance(nd, ast.Call) and isinstance(nd.func, ast.Attribute) and nd.func.attr == 'at':
+            skip |= {id(x) for x in nd.args}
+        if isinstance(nd, (ast.Module, ast.FunctionDef)) and nd.body and isinstance(nd.body[0], ast.Expr) and isinstance(nd.body[0].value, ast.Constant):
+            skip.add(id(nd.body[0].value))
+    def sig(e):                                           # 像财务数字的写法：两位以上小数、或 ≥10 带小数、或 ≥3 位小数
+        dc = len(e.split('.')[1]) if '.' in e else 0
+        return dc >= 3 or (dc >= 2 and abs(float(e)) >= 1) or (dc >= 1 and abs(float(e)) >= 10)
+    rows = []; seen = set()
+    for nd in ast.walk(tree):
+        if id(nd) in skip or not hasattr(nd, 'lineno'): continue
+        ln = nd.lineno
+        if isinstance(nd, (ast.List, ast.Tuple)):
+            fl = [ast.get_source_segment(src, x) for x in nd.elts if isinstance(x, ast.Constant) and isinstance(x.value, float)]
+            fl = [e for e in fl if e and sig(e)]
+            if len(fl) >= 3 and ln not in seen:
+                seen.add(ln); rows.append((None, ln, 0, '写死的数', f'video.py 第 {ln} 行一串手写数 [{", ".join(fl[:6])}…]——放进 facts.py 算好，用 V(…) 取'))
+        elif isinstance(nd, ast.Constant) and isinstance(nd.value, float) and ln not in seen:
+            e = ast.get_source_segment(src, nd) or ''
+            k = sig(e) and _fact_of(e, fnums) if re.fullmatch(r'\d+\.\d+', e) else None
+            if k: seen.add(ln); rows.append((None, ln, 0, '写死的数', f'video.py 第 {ln} 行 {e} = facts 的 {k}——用 V("{k}")'))
+        elif isinstance(nd, ast.Constant) and isinstance(nd.value, str) and ln not in seen:
+            s = nd.value
+            if _OPS.search(s) and len(_NUM.findall(s)) >= 2:
+                seen.add(ln); rows.append((None, ln, 0, '写死的数', f'video.py 第 {ln} 行手写算式「{s[:40]}」——算式里的数用 V(…) 拼'))
+                continue
+            for e in _NUM.findall(s):
+                if re.fullmatch(r'(19|20)\d\d', e) or not (sig(e) or (len(e) >= 3 and '.' not in e)): continue
+                k = _fact_of(e, fnums)
+                if k: seen.add(ln); rows.append((None, ln, 0, '写死的数', f'video.py 第 {ln} 行「{s[:30]}」里的 {e} = facts 的 {k}——用 V("{k}") 拼')); break
+    return sorted(rows, key=lambda r: r[1])
 def check_report(rows):
     """把 check_scenes 的结果合并成人读的几行：同一章连续几条字幕的"只有标题"并成一段"""
     L = []; i = 0
     while i < len(rows):
         si, k, s0, kind, d = rows[i]
+        if si is None: L.append(f'{kind}：{d}'); i += 1; continue
         if kind == '只有标题':
             j = i
             while j + 1 < len(rows) and rows[j + 1][0] == si and rows[j + 1][3] == '只有标题' and rows[j + 1][1] == rows[j][1] + 1: j += 1
@@ -553,7 +694,7 @@ def check_report(rows):
 def cmd_check():
     L = check_report(check_scenes())
     open(P('output', 'check.txt'), 'w', encoding='utf-8').write('\n'.join(L) or '无')
-    print(f'对口型检查（念到的数字画面上有没有、除章标题外有没有内容、有没有空框、字太小、红绿没图例、示意没标）：{len(L)} 处 → output/check.txt')
+    print(f'对口型检查（念到的数字画面上有没有、除章标题外有没有内容、有没有空框、字太小、红绿没图例、示意没标、滚动前显示 0、写死的数）：{len(L)} 处 → output/check.txt')
     for x in L[:12]: print('  ' + x)
     if len(L) > 12: print(f'  …还有 {len(L) - 12} 处，见 output/check.txt')
 
@@ -635,10 +776,10 @@ def cmd_frames(specs):
 # ---------- 渲染 ----------
 def render_frame(si, t, sc, total, offs):
     im = background(); f = Frame(im); NOW[0] = t
-    f.rec = []
+    f.rec = []; f.blocks = []
     C['scenes'][si][2](f, t, beats_of(sc, si), sc['T'])
     if C['spotlight']: spotlight(f, si, t, sc)
-    NOW[0] = t; f.rec = None
+    NOW[0] = t; f.rec = None; f.blocks = None
     chrome(f, si, sc['off'] + t, total, offs)
     subtitle(f, t, sc['subs'])
     ef = C['edge_fade']; fade = min(clamp(t / ef), clamp((sc['T'] - t) / ef)) if ef > 0 else 1

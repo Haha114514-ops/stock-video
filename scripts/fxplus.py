@@ -8,7 +8,8 @@
     镜头   camera / cam_keys        推近、平移、拉远（作用在已画好的内容区像素上）
     对比   versus                   两个数并排长出来 / 从两边对撞，差额弹出
     时间轴 timeline                 轴从左扫过去，事件逐个落点
-    强调   ring / arrow / highlight / underline   手绘感的圈、箭头、荧光笔、下划线
+    强调   focus / highlight / arrow / underline   元素本身提亮（其余可压暗）、整段提亮、箭头、下划线
+           （补丁二十一起不画圈、不在色块上贴标签；旧名 ring 仍可调用，效果同 focus）
     图表   waterfall / sankey       瀑布图（一级一级加减）、桑基图（钱从哪来到哪去，可多列）
     转场   transition               同一块画面从状态 A 换到 B：fade / wipe / slide / flip / iris / blinds
 """
@@ -171,19 +172,24 @@ def timeline(f, t, t0, box, events, d=1.6, col=GOLD, a=1.0, ticks=None, size=24,
 
 
 # ---------- 强调 ----------
-def ring(f, t, t0, box, col=GOLD, w=4, d=0.6, a=1.0, pad=14, turns=1.12, wobble=0.03, seed=1, start=200):
-    """手绘圈：绕 box 画一个略歪的椭圆，收尾多绕一点、和起笔错开（像笔圈出来的）。seed 换一个就是另一种歪法。返回进度。"""
+# 57号补丁二十一：强调 = 被讲到的元素本身亮起来，其余压暗。不画圈（手绘圈用户看了说丑），不在色块上另贴标签。
+def focus(f, t, t0, box, col=None, d=0.5, a=1.0, pad=6, dim=0.0):
+    """让 box 这块已经画好的元素本身亮起来：提亮 + 柔光（motion.glow）；dim > 0 时内容区其余部分同时压暗。
+    放在这块元素画完之后调用（dim 只压它之前画的东西，要压全场就放在分镜函数最后）。返回进度。"""
     if a <= 0.01 or t < t0: return 0.0
-    p = eo(pg(t, t0, d))
-    x0, y0, x1, y1 = box; cx, cy = (x0 + x1) / 2, (y0 + y1) / 2; rx, ry = (x1 - x0) / 2 + pad, (y1 - y0) / 2 + pad
-    n = max(16, int(140 * turns * p)); pts = []
-    for k in range(n + 1):
-        q = turns * p * k / n; ang = math.radians(start) + 2 * math.pi * q
-        r = 1 + _wob(ang, seed, wobble) + 0.06 * q
-        pts.append((cx + rx * r * math.cos(ang), cy + ry * r * math.sin(ang)))
-    m = max(rx, ry) * 0.4 + w + 10
-    L = AA(f, (cx - rx - m, cy - ry - m, cx + rx + m, cy + ry + m)); L.line(pts, col, w, a); L.done()
+    p = eo(pg(t, t0, d)); k = p * a; x0, y0, x1, y1 = box; R = (x0 - pad, y0 - pad, x1 + pad, y1 + pad)
+    if dim > 0:
+        m = Image.new('L', (W, CONTENT[3] - CONTENT[1]), int(255 * dim * k))
+        ImageDraw.Draw(m).rounded_rectangle((R[0], R[1] - CONTENT[1], R[2], R[3] - CONTENT[1]), 12, fill=0)
+        f.im.paste(background().crop(CONTENT), CONTENT, m)
+    glow(f, R, k, col)
     return p
+
+
+def _ring(f, t, t0, box, col=GOLD, w=4, d=0.6, a=1.0, *_, **__):
+    """补丁二十一前的手绘圈。旧工程重渲时改成 focus（不再画圈），新分镜直接用 focus。"""
+    return focus(f, t, t0, box, None, d, a, pad=0)
+ring = _ring          # 不写成 def：api_ref 速查里不再列出
 
 
 def arrow(f, t, t0, p0, p1, col=GOLD, w=4, d=0.5, bend=0.2, head=20, a=1.0, wobble=0.0, seed=2, dash=False):
@@ -215,14 +221,12 @@ def arrow(f, t, t0, p0, p1, col=GOLD, w=4, d=0.5, bend=0.2, head=20, a=1.0, wobb
     return p
 
 
-def highlight(f, t, t0, box, col=GOLD, d=0.4, a=0.3, pad=(10, 4), skew=8):
-    """荧光笔从左往右划过 box（略斜、两头不齐）。要在画字之前调用，字才会压在色块上面。返回进度。"""
+def highlight(f, t, t0, box, col=GOLD, d=0.4, a=0.3, pad=(10, 4), skew=None):
+    """整段提亮：box 这一段（色条的一段、图上一个区间）本身变亮、带柔光，col 薄铺一层；不画荧光笔、不贴小标签。
+    要先亮再写字就在写字之前调用。a 是强度，0.3 算满（旧工程传的 0.1~0.35 照用）。返回进度。"""
     if a <= 0.01 or t < t0: return 0.0
-    p = eo(pg(t, t0, d))
-    x0, y0, x1, y1 = box; px, py = pad
-    x0 -= px; x1 = lerp(x0, x1 + px, p); y0 -= py; y1 += py
-    L = AA(f, (x0 - skew - 4, y0 - 4, x1 + skew + 4, y1 + 4))
-    L.poly([(x0 + skew, y0), (x1 + skew * 0.4, y0 + 2), (x1, y1), (x0, y1 - 2)], col, a); L.done()
+    p = eo(pg(t, t0, d)); x0, y0, x1, y1 = box; px, py = pad
+    glow(f, (x0 - px, y0 - py, x1 + px, y1 + py), p * clamp(a / 0.3), col)
     return p
 
 
