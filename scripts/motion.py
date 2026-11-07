@@ -85,11 +85,13 @@ class Frame:
             if self.rec is not None:
                 bb = self.d.textbbox((x, y), runs[0], font=fs[0], anchor='l' + anchor[1])
                 self.rec.append((s, (x, bb[1], x + tot, bb[3]), a, size))
+                if self.recx is not None: self.recx.append((col, kind))
             for r, fn, w in zip(runs, fs, ws):
                 self.d.text((x, y), r, font=fn, fill=fill, anchor='l' + anchor[1], stroke_width=stroke, stroke_fill=sf); x += w
             return
         if self.rec is not None:
             self.rec.append((s, self.d.textbbox(xy, s, font=font(size, kind), anchor=anchor), a, size))
+            if self.recx is not None: self.recx.append((col, kind))
         self.d.text(xy, s, font=font(size, kind), fill=fill, anchor=anchor, stroke_width=stroke, stroke_fill=sf)
     def tw(self, s, size, kind='r'):
         if kind == 'n' and any(ord(ch) > 127 for ch in s): return sum(self._runs(s, size)[2])
@@ -97,10 +99,11 @@ class Frame:
     fills = None        # check 期间记下画过的红 / 绿色块（查"红绿同屏没图例"）
     legend = False      # components.legend 画过图例就置 True
     blocks = None       # 分镜绘制期间记下实心色块（给"讲到谁亮谁"找字所在的那一段）
+    recx = None         # 和 rec 一一对应的 (颜色, 字体)：被讲到的那段重画时，字照原色放大加粗
     def rect(self, box, col, a=1.0, r=0, outline=None, ow=2, oa=None):
         if a <= 0.01 and not (outline and (oa or 0) > 0.01): return
         if self.blocks is not None and col and a > 0.5 and tuple(col[:3]) != CARD:
-            self.blocks.append((tuple(box), len(self.rec or [])))
+            self.blocks.append((tuple(box), len(self.rec or []), tuple(col[:3])))
         if self.fills is not None and col and a > 0.5:
             rr, gg, bb = col[:3]
             if rr > gg + 60 and rr > bb + 60: self.fills.add('红')
@@ -285,7 +288,7 @@ def background():
 
 # ---------- 工程配置 ----------
 C = dict(root=None, name='', code='', source='', voice='zh-CN-YunyangNeural', rate='+6%',
-         lead=0.7, gap=0.35, tail=1.0, scenes=[], out_name='final.mp4', music=0.075, sub_size=44, spotlight=True, spot_dim=0.5,
+         lead=0.7, gap=0.35, tail=1.0, scenes=[], out_name='final.mp4', music=0.075, sub_size=44, spotlight=True, spot_dim=0.7,
          crf=18, preset='medium', x264_threads=3,      # 编码参数：要更快出片可在 setup 里传 preset='veryfast'
          edge_fade=0.3)                                # 每章首尾淡入淡出黑场的秒数；0 = 不淡，章节自己做进出场（如 fxplus.transition）
 def setup(**kw):
@@ -505,10 +508,29 @@ def _spot_keys(si, k, sc):
                 if s not in keep: keep.append(s)
         _SPOT[key] = keep[:2]
     return _SPOT[key]
+def relabel(f, blk, k):
+    """被讲到的那一段重画成"亮起来"的样子（docs/强调_用户认可样式.png）：底色提亮提饱和、左右各放大约 6 px、
+    浅色细描边，段上的字照原色放大加粗写在段上（不另加标签框）。blk = f.blocks 里的一项 (box, 字序号, 颜色)；k 0~1，
+    跟着 0.5 秒渐变。先 glow 出光晕，再调它。"""
+    if k <= 0.01 or f.rec is None: return
+    (x0, y0, x1, y1), j, col = blk
+    c = np.array(col, np.float32); g = c.mean(); c = g + (c - g) * (1 + 0.2 * k)           # 提饱和
+    c = c * (1 + 0.06 * k)                                                               # 提亮：GOLD → 约 (255,200,50) 暖金，不推成柠檬黄
+    c = tuple(int(v) for v in np.clip(c, 0, 255)); gx = 6 * k
+    E = (x0 - gx, y0, x1 + gx, y1); rr = int(min(6, (y1 - y0) / 2))
+    keep = [(s, tb, a, size, cx) for i, ((s, tb, a, size), cx) in enumerate(zip(f.rec, f.recx or []))
+            if i >= j and a > 0.5 and x0 <= (tb[0] + tb[2]) / 2 <= x1 and y0 <= (tb[1] + tb[3]) / 2 <= y1]
+    rec, f.rec = f.rec, None                              # 重画的字不再记进 rec
+    f.rect(E, c, 1.0, r=rr, outline=(255, 244, 214), ow=2, oa=0.85 * k)
+    for s, tb, a, size, (tc, kind) in keep:
+        sz = size * (1 + 0.3 * k)
+        while sz > size and f.tw(s, sz, 'n' if kind == 'n' else 'b') > (E[2] - E[0]) - 16: sz -= 1   # 放大后别出段
+        f.text(((tb[0] + tb[2]) / 2, (tb[1] + tb[3]) / 2), s, sz, tc, a, 'n' if kind == 'n' else 'b', 'mm')
+    f.rec = rec
 def _home(f, box, i):
     """字所在的那一块：在它之前画的、包住字中心的最小实心色块（色条的一段、柱子）；不在色块上就是字本身"""
     cx, cy = (box[0] + box[2]) / 2, (box[1] + box[3]) / 2; best = None
-    for b, j in f.blocks or []:
+    for b, j, _ in f.blocks or []:
         if j > i or not (b[0] <= cx <= b[2] and b[1] <= cy <= b[3]): continue
         ar = (b[2] - b[0]) * (b[3] - b[1])
         if ar <= W * 800 * 0.25 and (best is None or ar < best[0]): best = (ar, b)
@@ -542,8 +564,9 @@ def spotlight(f, si, t, sc):
     # 改成字所在的那一块整体提亮 + 柔光，慢呼吸
     for bx, st, env in lit:
         b = 0.5 - 0.5 * math.cos(2 * math.pi * max(0, t - st - 0.55) / 2.4)
-        blk = (bx[2] - bx[0]) * (bx[3] - bx[1]) > 0 and any(bx == b_ for b_, _ in f.blocks or [])
-        glow(f, bx, env * (0.8 + 0.2 * b), grow=0.05 if blk else 0.0, edge=blk)
+        blk = next((x for x in f.blocks or [] if x[0] == bx), None)
+        glow(f, bx, env * (0.8 + 0.2 * b))
+        if blk: relabel(f, blk, env)
 
 # ---------- 对口型检查：念到的东西，画面上有没有 ----------
 # 不渲染，按每条字幕念完前的时刻跑一遍分镜函数，看画面上记下的字。
@@ -786,10 +809,10 @@ def cmd_frames(specs):
 # ---------- 渲染 ----------
 def render_frame(si, t, sc, total, offs):
     im = background(); f = Frame(im); NOW[0] = t
-    f.rec = []; f.blocks = []
+    f.rec = []; f.blocks = []; f.recx = []
     C['scenes'][si][2](f, t, beats_of(sc, si), sc['T'])
     if C['spotlight']: spotlight(f, si, t, sc)
-    NOW[0] = t; f.rec = None; f.blocks = None
+    NOW[0] = t; f.rec = None; f.blocks = None; f.recx = None
     chrome(f, si, sc['off'] + t, total, offs)
     subtitle(f, t, sc['subs'])
     ef = C['edge_fade']; fade = min(clamp(t / ef), clamp((sc['T'] - t) / ef)) if ef > 0 else 1

@@ -175,7 +175,8 @@ def timeline(f, t, t0, box, events, d=1.6, col=GOLD, a=1.0, ticks=None, size=24,
 # 57号补丁二十一：强调 = 被讲到的元素本身亮起来，其余压暗。不画圈（手绘圈用户看了说丑），不在色块上另贴标签。
 def focus(f, t, t0, box, col=None, d=0.5, a=1.0, pad=6, dim=0.0, grow=0.0, edge=False):
     """让 box 这块已经画好的元素本身亮起来：提亮 + 柔光（motion.glow）；dim > 0 时内容区其余部分同时压暗。
-    box 正好是一个色块时可传 grow=0.05, edge=True, dim=0.5（略放大 + 细亮边，docs/强调_用户认可样式.png）。
+    box 里有一段色块时，这段整块重画：提亮提饱和、左右各放大约 6 px、细亮边、字放大加粗（docs/强调_用户认可样式.png）；
+    要其余压暗传 dim=0.7。box 里没有色块时（深色底上的字）只提亮 + 柔光，grow / edge 用在这种情况。
     放在这块元素画完之后调用（dim 只压它之前画的东西，要压全场就放在分镜函数最后）。返回进度。"""
     if a <= 0.01 or t < t0: return 0.0
     p = eo(pg(t, t0, d)); k = p * a; x0, y0, x1, y1 = box; R = (x0 - pad, y0 - pad, x1 + pad, y1 + pad)
@@ -183,13 +184,17 @@ def focus(f, t, t0, box, col=None, d=0.5, a=1.0, pad=6, dim=0.0, grow=0.0, edge=
         m = Image.new('L', (W, CONTENT[3] - CONTENT[1]), int(255 * dim * k))
         ImageDraw.Draw(m).rounded_rectangle((R[0], R[1] - CONTENT[1], R[2], R[3] - CONTENT[1]), 12, fill=0)
         f.im.paste(background().crop(CONTENT), CONTENT, m)
-    glow(f, R, k, col, grow=grow, edge=edge)
+    # box 里正好有一段色块（色条的一段、柱子）：这段整块重画成亮起来的样子（motion.relabel）
+    blk = max((b for b in f.blocks or [] if b[0][0] >= R[0] - 24 and b[0][1] >= R[1] - 24 and b[0][2] <= R[2] + 24 and b[0][3] <= R[3] + 24),
+              key=lambda b: (b[0][2] - b[0][0]) * (b[0][3] - b[0][1]), default=None)
+    if blk: glow(f, blk[0], k); relabel(f, blk, k)
+    else: glow(f, R, k, col, grow=grow, edge=edge)
     return p
 
 
 def _ring(f, t, t0, box, col=GOLD, w=4, d=0.6, a=1.0, *_, **__):
     """补丁二十一前的手绘圈。旧工程重渲时改成 focus（不再画圈），新分镜直接用 focus。"""
-    return focus(f, t, t0, box, None, d, a, pad=0, dim=0.45)
+    return focus(f, t, t0, box, None, d, a, pad=0, dim=0.7)
 ring = _ring          # 不写成 def：api_ref 速查里不再列出
 
 
