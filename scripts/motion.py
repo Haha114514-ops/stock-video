@@ -500,12 +500,20 @@ def _spot_keys(si, k, sc):
     """第 k 条字幕要点亮的字（字符串集合）：念到了，且在这条字幕开口前就已经在画面上"""
     key = (si, k)
     if key not in _SPOT:
-        s0, _, txt = sc['subs'][k]; keep = []
+        s0, e, txt = sc['subs'][k]; keep = []
         if s0 > 0.1:
             f = Frame(Image.new('RGB', (W, H))); f.rec = []; NOW[0] = s0 - 0.05
             C['scenes'][si][2](f, s0 - 0.05, beats_of(sc, si), sc['T'])
             for s, _, _ in _cands(f.rec, f.cover, txt):
                 if s not in keep: keep.append(s)
+            # 念到的数字有一个是这条字幕里才出场的（柱子边念边长）→ 整条不点亮、不压暗：出场动画就是强调。
+            # 否则会退去点亮同名的轴标签，再把正在出场的那根柱子一起压暗，光暗反了（海象新材 金句卡）
+            nums = _spoken_nums(txt)
+            if keep and nums:
+                g = Frame(Image.new('RGB', (W, H))); g.rec = []; te = min(e, sc['T']) - 0.05; NOW[0] = te
+                C['scenes'][si][2](g, te, beats_of(sc, si), sc['T'])
+                had = {s for s, _, _ in _cands(f.rec, f.cover, txt) if _num_hit(s, nums)}
+                if any(_num_hit(s, nums) and s not in had for s, _, _ in _cands(g.rec, g.cover, txt)): keep = []
         _SPOT[key] = keep[:2]
     return _SPOT[key]
 def relabel(f, blk, k):
