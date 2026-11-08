@@ -10,6 +10,8 @@
     - 红线：结尾没念免责、念了买卖建议 / 目标价口吻、讲参考价的那章画面列没写"非目标价"
     - 未经审计的数第一次出现时，旁白还没说过"未经审计"
     - 总览没填"公司一句话"，或"生意那一拍落在：第 N 章第 M 句"没填 / 指向不存在的句子（57号补丁十七）
+    - 总览没写"三张表总览落在"三句，或指向不存在的句子；资产负债表总览从那句到本章末没写到"有什么""钱是谁的"两根柱（补丁二十五）
+  要核：资产负债表总览画面出现几个时点；利润表 / 现金流量表总览画面没提瀑布图 / 现金桥
   要核（不挡路，口径审员和作者对着看）：
     - 开场章旁白里没出现"公司一句话"里的词（开场可能没说它是做什么的）
     - 旁白数字在 facts.json 里找不到；旁白数字 ↔ facts 说法对照
@@ -115,6 +117,45 @@ def business(md, chs, lines):
     return must, check, show
 
 
+BIG3 = [('利润表', r'瀑布|每 ?100 ?元', '瀑布图 / "每 100 元收入"'),
+        ('资产负债表', None, '"有什么"和"钱是谁的"两根柱'),
+        ('现金流量表', r'现金桥|经营.{0,12}投资.{0,12}筹资', '现金桥（经营 / 投资 / 筹资）')]
+TIMEPT = r'(?:20\d\d|今年|去年)\s*年?\s*(?:\d{1,2}\s*月末|年末|上半年|半年末|一季度末|三季度末)|\d{1,2}\s*月末'
+
+
+def statements(md, chs, lines):
+    """三张表总览（补丁二十五）：总览写明各落在哪一句，资产负债表那句的画面要有"有什么""钱是谁的"两边 → (必须改, 要核, 给作者看)"""
+    must, check, show = [], [], []
+    m = re.search(r'^-\s*三张表总览落在[^：:\n]*[：:][ \t]*(.*)$', md, re.M)
+    if not m:
+        return ['总览没写"三张表总览落在：利润表 第 N 章第 M 句；资产负债表 …；现金流量表 …"（照文字方案模板；画法见 方法与口径 §0）'], [], []
+    line = m.group(1)
+    for name, pat, want in BIG3:
+        h = re.search(name + r'\s*第\s*(\d+)\s*章第\s*(\d+)\s*句', line)
+        if not h:
+            must.append(f'"三张表总览落在"里{name}没填 第 N 章第 M 句：三张表每期都要有总览一拍'); continue
+        ci, li = int(h.group(1)), int(h.group(2))
+        hit = [k for k, (no, _, _) in enumerate(chs) if int(no) == ci]
+        if not hit or li < 1 or li > len(lines[hit[0]]):
+            must.append(f'{name}总览指向第 {ci} 章第 {li} 句，文字方案里没有这一句'); continue
+        rows = chs[hit[0]][2][li - 1:li + 2]                       # 总览可能跨两三句：看这句和后两句的画面
+        pic = ' '.join(r[1] for r in rows)
+        show.append(f'- {name}总览（第 {ci} 章第 {li} 句起）画面：{pic[:120]}')
+        if name == '资产负债表':
+            rest = ' '.join(r[0] + ' ' + r[1] for r in chs[hit[0]][2][li - 1:])   # 两根柱可能分几句出：从这句到本章末，旁白或画面写到都算
+            miss = [k for k in ('有什么', '钱是谁的') if k not in rest]
+            if miss:
+                must.append(f'资产负债表总览（第 {ci} 章第 {li} 句起）从这句到本章末没写到{"、".join(miss)}：按 §0 画同一时点两根等高柱'
+                            '——"有什么"（现金、理财、应收、存货、厂房设备…）和"钱是谁的"（经营负债、有息负债、股东自己的钱…）；'
+                            '只画一个科目、只画负债趋势都不算总览')
+            tp = {re.sub(r'\s', '', x) for x in re.findall(TIMEPT, pic)}
+            if len(tp) > 1:
+                check.append(f'资产负债表总览画面里出现了几个时点（{"、".join(sorted(tp))}）：两根柱要是同一天；和以前比可以，但每个时点两边都要画全')
+        elif not re.search(pat, pic):
+            check.append(f'{name}总览（第 {ci} 章第 {li} 句起）画面列没提{want}：§0 的默认画法，换画法要保证整张表看得全')
+    return must, check, show
+
+
 def main():
     sys.stdout.reconfigure(encoding='utf-8', errors='replace')   # 开头就切：前面几处报错也是中文
     if len(sys.argv) < 2: print(__doc__); return 0
@@ -156,6 +197,8 @@ def main():
     # 公司做什么、靠什么赚钱
     bm, bc, biz = business(md, chs, lines)
     must += bm; check += bc
+    sm, sc_, big3 = statements(md, chs, lines)
+    must += sm; check += sc_; biz += big3
 
     # 未经审计：第一次念到标了"未经审计"的数时，前面（含这句）要说过
     labels = facts.get('labels', {})
