@@ -11,6 +11,7 @@
     - 未经审计的数第一次出现时，旁白还没说过"未经审计"
     - 总览没填"公司一句话"，或"生意那一拍落在：第 N 章第 M 句"没填 / 指向不存在的句子（57号补丁十七）
     - 总览没写"三张表总览落在"三句，或指向不存在的句子；资产负债表总览从那句到本章末没写到"有什么""钱是谁的"两根柱（补丁二十五）
+    - 总览没填"判断标准"（看哪个指标、两档各多少倍、参照谁）（补丁二十八）
   要核：资产负债表总览画面出现几个时点；利润表 / 现金流量表总览画面没提瀑布图 / 现金桥
   要核（不挡路，口径审员和作者对着看）：
     - 开场章旁白里没出现"公司一句话"里的词（开场可能没说它是做什么的）
@@ -19,6 +20,9 @@
     - 用了强推断词却没说"推测 / 可能"
     - 推算句没念"推算 / 假设 / 如果"
     - 估时超过 15 秒的长句（建议拆，不强制）
+    - 念到"便宜 / 不贵"的句子：是不是判断标准那个意思（补丁二十八）
+    - 先算再写的词（连续、首次、通常、拐点……；"比…多 / 少"却没给数）：算过或材料里有吗（补丁二十八）
+    - 年化 / 推全年的句子，而方案里没提季节性（补丁二十八）
 """
 import os, re, sys, json
 
@@ -31,6 +35,9 @@ LONG = 15.0           # 秒，超过建议拆句
 STRONG = r'信号|说明了|意味着|显然|一定|必然|等于|相当于|白得|白送|算进去|定价|市场(在|还在|先)|打不破|打破|解释不了|看来|看起来|似乎'
 HEDGE = r'推测|可能|也许|或许|不一定|说不准|不是结论|几种'
 PREMISE = r'推算|假设|如果|按.{0,12}算|年化'
+VERIFY = r'连续|首次|第一次|头一回|通常|一向|历来|向来|拐点|见底|触底|复苏|新高|新低'   # 先算再写（补丁二十八）
+COMPARE = r'比.{1,12}(多|少|高|低|快|慢)'
+EXTRAP = r'年化|照这个速度|推全年|全年(会|能|大概|可能)'
 
 
 def clean(s):
@@ -156,6 +163,31 @@ def statements(md, chs, lines):
     return must, check, show
 
 
+def judge(md, chs, lines):
+    """判断标准（补丁二十八）：总览要写一行；"便宜 / 不贵"都指它；先算再写的词；外推前看季节性 → (必须改, 要核)"""
+    must, check = [], []
+    m = re.search(r'^-\s*判断标准[^：:\n]*[：:][ \t]*(.*)$', md, re.M)
+    if not m or len(clean(m.group(1))) < 6:
+        must.append('总览的"判断标准"没填：照 故事.md 推理表下那一行写——看哪个指标、"不贵""便宜"两档各对应多少倍、参照谁、为什么（方法与口径 §2）')
+    cheap = [f'{chs[si][0]}章{li + 1}句' for si, rows in enumerate(lines) for li, s in enumerate(rows)
+             if re.search(r'便宜|不贵', s)]
+    if cheap:
+        check.append(f'念到"便宜 / 不贵"的 {len(cheap)} 句（{"、".join(cheap)}）：每句都是判断标准那个意思吗？只是某个倍数低就说"市净率低"，不说"便宜"')
+    seasonal = '季节' in md
+    for si, rows in enumerate(lines):
+        for li, s in enumerate(rows):
+            tag = f'第 {chs[si][0]} 章第 {li + 1} 句'
+            w = re.search(VERIFY, s)
+            if w:
+                check.append(f'先算再写「{w.group()}」：{tag}——算过或材料里有原文吗')
+            c = re.search(COMPARE, s)
+            if c and not R._nums(s):
+                check.append(f'"{c.group()}"没给数：{tag}——方向算过吗（多 / 少别写反）')
+            if re.search(EXTRAP, s) and not seasonal:
+                check.append(f'{tag}在年化 / 推全年，方案里没提季节性：先看 facts.md「单季拆分」，有规律按往年分布推，没有写"看不出季节性"')
+    return must, check
+
+
 def main():
     sys.stdout.reconfigure(encoding='utf-8', errors='replace')   # 开头就切：前面几处报错也是中文
     if len(sys.argv) < 2: print(__doc__); return 0
@@ -199,6 +231,8 @@ def main():
     must += bm; check += bc
     sm, sc_, big3 = statements(md, chs, lines)
     must += sm; check += sc_; biz += big3
+    jm, jc = judge(md, chs, lines)
+    must += jm; check += jc
 
     # 未经审计：第一次念到标了"未经审计"的数时，前面（含这句）要说过
     labels = facts.get('labels', {})

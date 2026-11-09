@@ -9,10 +9,13 @@
 | `fx.py` | 56号补丁一起：有含义的动效 `count`（数字变成另一个数）/ `fly`（数从图上飞进算式）/ `equation`（算式一项项拼出）/ `split`（一根条拆段、某段掉出去）/ `drain`（钱按年花掉）/ `zoom`（放大一小块）/ `strike`（划掉）。只新增、不改 motion.py，旧工程不受影响。用法看 `python api_ref.py` |
 | `fxplus.py` | 57号补丁十六：第二组工具，不规定用法——镜头推拉平移 `camera` / `cam_keys`、对比 `versus`（并排 / 对撞）、时间轴 `timeline`、强调 `focus`（元素本身提亮、其余可压暗）/ `highlight`（整段提亮）/ `arrow` / `underline`（补丁二十一起 `ring` 不再画手绘圈，效果同 `focus`）、瀑布图 `waterfall`、桑基图 `sankey`（可多列）、同一块画面的转场 `transition`（fade / wipe / slide / flip / iris / blinds）。镜头和推移只动内容、背景不动；画面上记下的字位置跟着换算，讲到谁亮谁、对口型检查照常 |
 | `review_pack.py` | 54号起：成片审片包 `python review_pack.py <工程> [--video x.mp4] [--out 目录]` → 每章按句精确抽帧拼图 + `审片包.md`（旁白、念到的东西画面上有没有、内容区静止段、数字对账、56号起：旁白数字 ↔ facts 说法对照、推断句、推算句、观众 / 口径两组审片问题）。给两个独立审片人用 |
+| `cover.py` | 57号补丁二十七：封面图（成片之外单独一张，不放进成片）`python cover.py <工程> <公司名> <代码> [--tag ..] [--sub ..]` → `output/封面_<公司名>_<代码>.png`，1920×1080，配色同成片 |
 | `facts_peek.py` | 57号补丁二十：只读查看 facts.json `python facts_peek.py <工程> [键前缀…]`，一行一个键：值 + 说法；列表只打印长度，按日期的字典折叠，带前缀才展开。主控看 facts 只用它 |
 | `motion.py` 的 `check` | 55号起：`python video.py check`（preview 末尾自动跑），不渲染，按每条字幕念完前一刻跑分镜，列出"念到的数字画面上没有 / 只有章标题 / 空框"，57号补丁十起加"字太小 / 红绿没图例 / 示意没标"，补丁二十一起加"滚动前显示 0 / 滚动露长小数"（0.5 秒网格跑分镜）和"写死的数"（静态扫 video.py 对 facts.json） → `output/check.txt`，审片包同样列出。是清单，不是闸门 |
 | `sysenv.py` | 57号补丁十五：跟本机有关的设置（字体、字幕字体名、ffmpeg / ffprobe、并行数），macOS / Windows / Linux 各有默认，环境变量可覆盖；`python sysenv.py` 打印本机实际值 |
 | `fetch_data.py` | A股个股+同行数据抓取（东财，断连回退新浪）：`python fetch_data.py <代码> <输出目录> [同行代码…] [--notes=科目,…] [--no-numbers / --no-reports]`；下载年报 / 半年报后调用 `report_cut.py` |
+| `extract_facts.py` | 57号补丁二十八（从 stock-report 移来，两边共用）：A 股读表底稿 `python extract_facts.py <工程> [--peers 代码1,代码2,代码3]` → `<工程>/facts.md`（三表关键科目逐年 + 最新期与上年同期、近四年单季拆分和各季度占全年比例、经营现金流 − 资本开支与筹资其他支付、分红付息、估值分位、近 12 个月分红、主营构成、同行对比）+ `pb_series.csv`；同行没抓过会调 `fetch_data.py` |
+| `fetch_prev_report.py` | 57号补丁二十八（同上）：下载上一年同期定期报告并切段，做经营数据同比 `python fetch_prev_report.py <代码> <工程>/data/reports [--year 2025] [--cat 半年报|年报]` |
 | `report_cut.py` | 57号补丁十一：定期报告 PDF → 带页标记的 `_全文.txt`（`=====PDF第N页=====`）、`_管理层讨论与分析.txt`、`_附注_<科目>.txt`（主要会计数据、分季度、关键审计事项、利润分配、所得税、有息负债各项、减值、现金流量表补充资料、分部、期后事项等）、`_目录索引.md`（各节起始页、切好的段、合并报表 / 诉讼 / 关联交易 / 担保的页码、没切到的项）。季报、港股手动跑：`python report_cut.py <PDF> [输出目录] [--notes=科目,…]` |
 | `fetch_hk.py` | 港股个股+同行数据抓取（东财 / 百度估值，断连回退新浪）：`python fetch_hk.py <代码> <输出目录> [同行港股代码…]`。三大表金额是人民币折算，公告原文需手动下载（见 方法与口径 §1） |
 | `build_v4.py` / `web_template_ep03.html` / `gsap.min.js` | 纸面科普线（竖屏 GSAP 逐帧） |
