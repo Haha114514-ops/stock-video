@@ -1,5 +1,5 @@
 """从 fetch_data.py 的产出里提出读表要用的数，写成一份小的 facts.md（读表底稿：主控读它找原因、定判断标准；
-上片 / 上报告的数仍按各自流程冻结）。stock-video 和 stock-report 共用。
+上片的数仍在 facts.py 里冻结）。
 
 用法:
     python extract_facts.py <工程目录> [--peers 代码1,代码2,代码3]

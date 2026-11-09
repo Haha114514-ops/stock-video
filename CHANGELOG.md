@@ -1,5 +1,10 @@
 # stock-video SKILL 沿革全录（51号起沿革外移至此，64号#9）
 
+## 脚本说明小改（2026-11-09，不升版本号）
+- 起因：stock-report 改为自带抓数读表脚本，不再借用本目录（stock-report 补丁四）。
+- 改动：`extract_facts.py`、`fetch_prev_report.py` 的说明删掉"stock-video 和 stock-report 共用"。
+- 没改：脚本逻辑、SKILL、模板。
+
 ## 57号补丁三十（2026-11-09）：照 stock-report 的措辞修订，去掉会被误会的说法
 - 起因：stock-report 逐条改了容易误会的话，用户要求查 video 有没有同样的问题。
 - 原本想保证什么：照规约做的人不会把一个词理解成两件事，规约本身不预设结论。

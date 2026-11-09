@@ -3,7 +3,7 @@
 用法:
     python fetch_prev_report.py <代码> <工程目录>/data/reports [--year 2025] [--cat 半年报|年报]
 
-fetch_data.py 只下最新一份年报和半年报；同比要用的上一年同期报告用这个补。stock-video 和 stock-report 共用。
+fetch_data.py 只下最新一份年报和半年报；同比要用的上一年同期报告用这个补。
 """
 import os, re, sys, time
 import requests
