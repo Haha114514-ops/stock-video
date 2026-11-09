@@ -55,3 +55,15 @@ python scripts/sysenv.py
 ## 声明
 
 视频内容只解读公开财报，不构成投资建议。`scripts/gsap.min.js` 是 GreenSock 的 GSAP 3.12.5，按其许可证使用。
+
+## 图文报告：stock-report
+
+同一套读表方法出 **PDF 图文报告**（不是视频），在 `stock-report/` 里，是独立的另一个 skill，和本 skill 不冲突、可以同时装。
+安装、用法见 `stock-report/README.md`。例：对助手说"做个金隅集团的报告"，它会按 `stock-report/SKILL.md` 走：
+
+```bash
+python scripts/fetch_data.py 601992 <工程>/data --no-numbers                 # 年报 / 半年报 + 切段
+python scripts/fetch_data.py 601992 <工程>/data 000401 --sub=000401 --no-reports   # 数字；冀东水泥是上市子公司（方法与口径 §3）
+python stock-report/scripts/report_check.py <工程>
+python stock-report/scripts/build_report.py <工程>          # → <工程>/output/报告.pdf
+```
