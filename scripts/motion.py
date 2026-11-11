@@ -14,12 +14,15 @@ r"""motion.py —— 暗色个股片的逐帧动画引擎（52号起的唯一渲
 
 命令：tts → preview → render → mux（all 一次跑完；render resume 断点续渲；render --jobs 4 指定并行数）
 check（preview 末尾自动跑）：不渲染，列出"念到的数字画面上没有""除章标题外什么都没有""空框"
-"数字滚动前先显示 0""滚动中露出长小数""video.py 写死 facts 里的数 / 手写算式"，写 output/check.txt
+"数字滚动前先显示 0""滚动中露出长小数""video.py 写死 facts 里的数 / 手写算式"
+"文字叠压""重影（飞入拖影）""数字先于卡片""双重压暗 / 压暗只亮字""文字方案缺章"，写 output/check.txt；缺章时 preview / render 直接报错
 动画的基本写法：a = pg(t, B[2])  →  第 3 句开口时开始、0.7 秒内从 0 缓动到 1，用来控制透明度/长度/数字。
 长句里的第二、三个意思挂到它被念到的那一刻：pg(t, B.at(2, '6.5%')) = 第 3 句念到"6.5%"时；
 B.S[2][1] = 第 3 句第 2 条字幕开口时（字幕在逗号处切）。
 引擎自动做的"讲到谁亮谁"：字幕念到的数字 / 短标签如果早已在画面上，它所在的那一块（色条的一段、柱子；
 不在色块上就是字本身）整体提亮、带柔光，其余内容稍退；不加框、不贴标签。这条字幕念完淡出（setup(spotlight=False) 关掉）。
+只认这句开口前就在画面上的字；字紧挨色块（柱旁标签、柱顶数值）亮的是那块。注释里和别处同名的数写 f.text(..., spot=False)；
+分镜自己压暗做强调的那段调 own_focus(f)（fxplus.highlight 自动让位），否则整屏再压一层、该亮的反被压下。
 """
 import os, sys, json, math, re, asyncio, subprocess, wave
 import numpy as np
@@ -75,9 +78,13 @@ class Frame:
         return runs, fs, [self.d.textlength(r, font=fn) for r, fn in zip(runs, fs)]
     rec = None          # 分镜绘制期间记下画了哪些字（给"讲到谁亮谁"用），其余时候为 None
     cover = 0           # overlay 压暗时，记下此前画的字已被盖住
-    def text(self, xy, s, size=36, col=TXT, a=1.0, kind='r', anchor='la', stroke=0):
-        """anchor 两个字母：水平 l/m/r + 垂直 a/m/s/d（同 PIL）"""
+    nospot = ()        # spot=False 写的字在 rec 里的序号：不参与"讲到谁亮谁"匹配（仍算"画面上有这个数"）
+    heads = ()         # headline 画的章号、章名在 rec 里的序号
+    own = False        # 本帧分镜自己在做强调 / 压暗（own_focus、fxplus.highlight 置 True）：自动回指让位
+    def text(self, xy, s, size=36, col=TXT, a=1.0, kind='r', anchor='la', stroke=0, spot=True):
+        """anchor 两个字母：水平 l/m/r + 垂直 a/m/s/d（同 PIL）。spot=False：注释 / 旁注里和别处同名的数，不让自动回指拿它当被点名的元素"""
         if a <= 0.01 or s == '': return
+        if not spot and self.rec is not None: self.nospot = set(self.nospot) | {len(self.rec)}
         fill = col + (int(255 * clamp(a)),); sf = (0, 0, 0, int(200 * clamp(a)))
         if kind == 'n' and any(ord(ch) > 127 for ch in s):
             runs, fs, ws = self._runs(s, size); tot = sum(ws); x, y = xy
@@ -227,10 +234,12 @@ def hbar(f, x, y, h, length, col, a=1.0, label=None, size=28, lcol=TXT, r=6):
     if label: f.text((x + max(length, 0) + 12, y + h / 2), label, size, lcol, a, 'n', 'lm')
 def headline(f, t, num, title):
     """场景大标题：编号 + 标题 + 金色下划线生长"""
-    p = pg(t, 0.15, 0.6); x = 130 - 40 * (1 - p)
-    f.text((x, 182), num, 56, GOLD, p, 'n', 'lm')
-    f.text((x + 92, 182), title, 46, TXT, p, 'b', 'lm')
-    if f.rec is not None: f.cover = max(f.cover, len(f.rec))     # 章节标题不参与"讲到谁亮谁"
+    p = pg(t, 0.15, 0.6); x = 130 - 40 * (1 - p); i0 = len(f.rec) if f.rec is not None else 0
+    f.text((x, 182), num, 56, GOLD, p, 'n', 'lm', spot=False)       # 章节标题不参与"讲到谁亮谁"
+    f.text((x + 92, 182), title, 46, TXT, p, 'b', 'lm', spot=False)
+    # 只记标题这两行（check 的"只有章标题"不算它们）。原来是把此前画的字全记成"被盖住"：
+    # 分镜在函数末尾才调 headline 时，整章内容都被当成没有，误报"只有章标题"（高鑫零售 05 章前 65 秒）
+    if f.rec is not None: f.heads = set(f.heads) | set(range(i0, len(f.rec)))
     f.rect((130, 222, 130 + 260 * pg(t, 0.4, 0.8), 226), GOLD, 0.9 * p)
 def overlay(f, q, alpha=0.85):
     """压暗全幅内容区，用于金句/转场卡"""
@@ -488,32 +497,47 @@ def _lab_hit(txt, said):
     """短标签（4~8 个汉字、不含数字）被原样念到，例如“学生文具”；三个字以下太容易撞到别处的同名标签"""
     s = txt.strip()
     return 4 <= _cjk(s) <= 8 and _cjk(s) == len(s) and s in said
-def _cands(rec, cover, said):
-    """画面上（未被压暗盖住、已到位）的、被念到的字：先数字、后标签，各自按字号从大到小"""
+def _cands(f, said):
+    """画面上（未被压暗盖住、已到位、没写 spot=False）的、被念到的字 (字, 框, 字号, rec 序号)：先数字、后标签，各自按字号从大到小"""
     nums = _spoken_nums(said)
-    ok = [(s, box, size) for i, (s, box, a, size) in enumerate(rec) if i >= cover and a > 0.9 and size >= 24]
+    ok = [(s, box, size, i) for i, (s, box, a, size) in enumerate(f.rec) if i >= f.cover and a > 0.9 and size >= 24 and i not in f.nospot]
     n = sorted([x for x in ok if nums and _num_hit(x[0], nums)], key=lambda x: -x[2])
     l = sorted([x for x in ok if _lab_hit(x[0], said)], key=lambda x: -x[2])
     return n + l
 _SPOT = {}
+def own_focus(f):
+    """本帧分镜自己在做强调（手动把别的元素压暗、只留几段亮）：调一下，自动"讲到谁亮谁"这一帧让位，
+    不再整屏压一层、去点亮同名的字。fxplus.highlight 自动调。"""
+    f.own = True
+def _spot_frame(si, sc, t):
+    f = Frame(Image.new('RGB', (W, H))); f.rec = []; f.blocks = []; NOW[0] = t
+    C['scenes'][si][2](f, t, beats_of(sc, si), sc['T'])
+    return f
+def _sent_start(sc, si, s0):
+    B = beats_of(sc, si); return B[max([i for i, b in enumerate(B) if b <= s0 + 1e-6] or [0])]
 def _spot_keys(si, k, sc):
     """第 k 条字幕要点亮的字（字符串集合）：念到了，且在这条字幕开口前就已经在画面上"""
     key = (si, k)
     if key not in _SPOT:
         s0, e, txt = sc['subs'][k]; keep = []
         if s0 > 0.1:
-            f = Frame(Image.new('RGB', (W, H))); f.rec = []; NOW[0] = s0 - 0.05
-            C['scenes'][si][2](f, s0 - 0.05, beats_of(sc, si), sc['T'])
-            for s, _, _ in _cands(f.rec, f.cover, txt):
-                if s not in keep: keep.append(s)
+            f = _spot_frame(si, sc, s0 - 0.05)
+            # 不在色块上的"裸字"（注释卡、旁注里的数），要在这句开口前就在画面上才算回指；本句才出场的是这句自己的讲解，
+            # 拿它当被点名的元素会整屏压暗、只亮这行字，该亮的柱子反而被压下去（高鑫零售 02 章第 10 句）
+            b0 = _sent_start(sc, si, s0); pre = None
+            if 0.1 < b0 < s0 - 0.06:
+                pf = _spot_frame(si, sc, b0 - 0.05); pre = {x for x, _, a, _ in pf.rec[pf.cover:] if a > 0.9}
+            for s, box, _, i in _cands(f, txt):
+                if s in keep: continue
+                if pre is not None and s not in pre and not _home(f, box, i)[2]: continue
+                keep.append(s)
             # 念到的数字有一个是这条字幕里才出场的（柱子边念边长）→ 整条不点亮、不压暗：出场动画就是强调。
             # 否则会退去点亮同名的轴标签，再把正在出场的那根柱子一起压暗，光暗反了（海象新材 金句卡）
             nums = _spoken_nums(txt)
             if keep and nums:
-                g = Frame(Image.new('RGB', (W, H))); g.rec = []; te = min(e, sc['T']) - 0.05; NOW[0] = te
-                C['scenes'][si][2](g, te, beats_of(sc, si), sc['T'])
-                had = {s for s, _, _ in _cands(f.rec, f.cover, txt) if _num_hit(s, nums)}
-                if any(_num_hit(s, nums) and s not in had for s, _, _ in _cands(g.rec, g.cover, txt)): keep = []
+                te = min(e, sc['T']) - 0.05; g = _spot_frame(si, sc, te)
+                had = {x[0] for x in _cands(f, txt) if _num_hit(x[0], nums)}
+                if any(_num_hit(x[0], nums) and x[0] not in had for x in _cands(g, txt)): keep = []
         _SPOT[key] = keep[:2]
     return _SPOT[key]
 def relabel(f, blk, k):
@@ -536,37 +560,49 @@ def relabel(f, blk, k):
         f.text(((tb[0] + tb[2]) / 2, (tb[1] + tb[3]) / 2), s, sz, tc, a, 'n' if kind == 'n' else 'b', 'mm')
     f.rec = rec
 def _home(f, box, i):
-    """字所在的那一块：在它之前画的、包住字中心的最小实心色块（色条的一段、柱子）；不在色块上就是字本身"""
-    cx, cy = (box[0] + box[2]) / 2, (box[1] + box[3]) / 2; best = None
+    """字所在的那一块 → (块, 旁边的标签框或 None, 是不是色块)：在它之前画的、包住字中心的最小实心色块（色条的一段、柱子）；
+    字紧挨色块（≤24 px：堆叠柱旁的"现金类 174"、柱顶 / 柱底的"−23.1"）就是那一块，标签一起留亮；都不是就是字本身"""
+    cx, cy = (box[0] + box[2]) / 2, (box[1] + box[3]) / 2; best = None; side = None; th = box[3] - box[1]
     for b, j, _ in f.blocks or []:
-        if j > i or not (b[0] <= cx <= b[2] and b[1] <= cy <= b[3]): continue
         ar = (b[2] - b[0]) * (b[3] - b[1])
-        if ar <= W * 800 * 0.25 and (best is None or ar < best[0]): best = (ar, b)
-    return best[1] if best else (box[0] - 6, box[1] - 4, box[2] + 6, box[3] + 4)
+        if ar > W * 800 * 0.25: continue
+        if j <= i and b[0] <= cx <= b[2] and b[1] <= cy <= b[3]:
+            if best is None or ar < best[0]: best = (ar, b)
+        elif b[1] <= cy <= b[3] and b[3] - b[1] >= 0.8 * th:            # 左右紧挨（堆叠柱旁的标签）
+            gap = max(b[0] - box[2], box[0] - b[2])
+            if 0 <= gap <= 24 and (side is None or gap < side[0]): side = (gap, b)
+        elif b[0] <= cx <= b[2] and min(b[2] - b[0], b[3] - b[1]) >= 6:  # 上下紧挨（柱顶 / 柱底的数值）
+            gap = max(b[1] - box[3], box[1] - b[3])
+            if 0 <= gap <= 24 and (side is None or gap < side[0]): side = (gap, b)
+    if best: return best[1], None, True
+    if side: return side[1], box, True
+    return (box[0] - 6, box[1] - 4, box[2] + 6, box[3] + 4), None, False
 def spotlight(f, si, t, sc):
     subs = sc['subs']
     k = max((i for i, (s0, _, _) in enumerate(subs) if s0 <= t), default=None)
-    if k is None: return
+    if k is None or f.own: return
     cur = _spot_keys(si, k, sc); prev = _spot_keys(si, k - 1, sc) if k > 0 else []
     boxes = {}
     for i, (s, box, a, size) in enumerate(f.rec):
         if i >= f.cover and a > 0.9 and s not in boxes: boxes[s] = _home(f, box, i)
-    lit = []
+    lit = []; holes = []
     for s in set(cur) | set(prev):
         if s not in boxes: continue
+        hb, lab, _ = boxes[s]
         if s in cur:
             j = k                                         # 连续几条字幕都讲它：从第一次点亮算起，不闪
             while j > 0 and s in _spot_keys(si, j - 1, sc): j -= 1
             st = subs[j][0]; env = pg(t, st + 0.1, 0.45) * (out(t, subs[k][1], 0.4) if k == len(subs) - 1 or s not in _spot_keys(si, k + 1, sc) else 1)
         else:
             st = subs[k - 1][0]; env = out(t, subs[k][0], 0.35)
-        if env > 0.01: lit.append((boxes[s], st, env))
+        if env > 0.01: lit.append((hb, st, env))
+        if env > 0.01 and lab: holes.append((lab, env))
     if not lit: return
     # 其余内容稍微退向背景，被念到的留亮：观众一眼知道"现在说的是这个"（退向背景而不是盖黑块，没有边缘）
     dim = max(e for _, _, e in lit) * C['spot_dim']
     if dim > 0.01:
         box = (0, 120, W, 920); m = Image.new('L', (W, 800), int(255 * dim)); md = ImageDraw.Draw(m)
-        for (x0, y0, x1, y1), _, e in lit: md.rounded_rectangle((x0 - 8, y0 - 128, x1 + 8, y1 - 112), 12, fill=int(255 * dim * (1 - e)))
+        for (x0, y0, x1, y1), e in [(b, e) for b, _, e in lit] + holes: md.rounded_rectangle((x0 - 8, y0 - 128, x1 + 8, y1 - 112), 12, fill=int(255 * dim * (1 - e)))
         f.im.paste(background().crop(box), box, m)
     # 57号补丁二十一：不再在字外面套金色底框（金色条上会变成"更亮的金色小标签"，用户说很 low），
     # 改成字所在的那一块整体提亮 + 柔光，慢呼吸
@@ -591,9 +627,10 @@ def check_scenes():
         B = beats_of(sc, si); fn = C['scenes'][si][2]; seen = set()
         for k, (s0, e, txt) in enumerate(sc['subs']):
             tt = max(s0 + 0.1, e - 0.15)
-            f = Frame(background()); f.rec = []; f.cards = []; f.fills = set(); NOW[0] = tt
+            f = Frame(background()); f.rec = []; f.cards = []; f.fills = set(); f.blocks = []; NOW[0] = tt
             fn(f, tt, B, sc['T'])
-            con = [(s, box) for s, box, a, _ in f.rec[f.cover:] if a > 0.5]
+            spot = _check_spot(si, k, sc, f, tt) if C['spotlight'] and not f.own else None
+            con = [(s, box) for i, (s, box, a, _) in enumerate(f.rec) if a > 0.5 and i >= f.cover and i not in f.heads]
             # 同一章里同一处只报一次（一段字一直在画面上，不逐条字幕重复报）
             for s, _, a, size in f.rec[f.cover:]:
                 if a > 0.5 and size < 20 and _cjk(s) >= 6 and ('小', s) not in seen:
@@ -613,18 +650,45 @@ def check_scenes():
                 x0, y0, x1, y1 = box
                 if not any(x0 <= (b[0] + b[2]) / 2 <= x1 and y0 <= (b[1] + b[3]) / 2 <= y1 for _, b in con):
                     out_.append((si, k, s0, '空框', f'框 {int(x0)},{int(y0)}–{int(x1)},{int(y1)} 里还没有字｜{txt}')); break
+            if spot and (spot[0], si, _sent_start(sc, si, s0)) not in seen:
+                seen.add((spot[0], si, _sent_start(sc, si, s0))); out_.append((si, k, s0, spot[0], spot[1] + '｜' + txt))
     NOW[0] = 0
     return out_ + check_zero() + check_source()
+
+def _check_spot(si, k, sc, f, tt):
+    """自动回指在这条字幕会不会"整屏压暗、该亮的没亮"：
+    双重压暗 = 分镜自己正把一批字压暗（句首亮、现在半透明），自动回指又整屏压一层；
+    压暗只亮字 = 整屏压暗，亮起来的只有字本身（注释卡、旁注里的同名数），它说的那块色块 / 柱子没亮"""
+    keys = _spot_keys(si, k, sc); NOW[0] = tt
+    if not keys: return None
+    hs = {}
+    for i, (s, box, a, _) in enumerate(f.rec):
+        if s in keys and a > 0.9 and i >= f.cover and s not in hs: hs[s] = _home(f, box, i)
+    if not hs: return None
+    b0 = _sent_start(sc, si, sc['subs'][k][0])
+    if b0 > 0.1:
+        pf = _spot_frame(si, sc, b0 - 0.05); NOW[0] = tt
+        was = {s for s, _, a, _ in pf.rec[pf.cover:] if a > 0.9}
+        dimmed = [s for s, _, a, _ in f.rec[f.cover:] if 0.1 < a < 0.6 and s in was]
+        if len(dimmed) >= 3:
+            return ('双重压暗', f'分镜在压暗「{"」「".join(dimmed[:3])}」等 {len(dimmed)} 处，自动回指又点亮「{"」「".join(hs)}」、整屏再压一层'
+                    '——分镜自己做强调时这一段调 own_focus(f)，或给同名的字 spot=False')
+    if not any(h[2] for h in hs.values()):
+        return ('压暗只亮字', f'整屏压暗，亮起来的只有「{"」「".join(hs)}」这行字本身，没有色块 / 柱子跟着亮'
+                '——是注释 / 旁注里的同名数就写 spot=False；确实要强调它所在的那块，把字写在块上')
+    return None
 
 # ---------- 数字滚动前先显示 0 / 滚动中露出长小数（57号补丁二十一） ----------
 # 晨光那期出了 9 处：业务卡在前三句一直是"0.00亿"、"最低 0.00 / 现价 0.00"，观众会当成真实数字；另有"0.76058元"。
 # 按 ZERO_STEP 秒的网格跑分镜函数（不渲染），同一位置、同一格式的字先是 0、后来变成非 0 的，就是滚动前露了 0。
 ZERO_STEP = 0.5
 def _zero_scene(si):
-    tl, _ = load_tl(); sc = tl[si]; B = beats_of(sc, si); fn = C['scenes'][si][2]; occ = []
+    tl, _ = load_tl(); sc = tl[si]; B = beats_of(sc, si); fn = C['scenes'][si][2]; occ = []; lay = []
     for n in range(int(sc['T'] / ZERO_STEP) + 1):
-        t = n * ZERO_STEP; f = Frame(background()); f.rec = []; NOW[0] = t
+        t = n * ZERO_STEP; f = Frame(background()); f.rec = []; f.cards = []; NOW[0] = t
         fn(f, t, B, sc['T'])
+        lay.append((t, [(s, b, a, z) for i, (s, b, a, z) in enumerate(f.rec) if i >= f.cover and i not in f.heads and a > 0.5 and z >= 16],
+                    [(b, a) for b, a, ri in f.cards]))
         for s, (x0, y0, x1, y1), a, _ in f.rec[f.cover:]:
             if a < 0.5 or _cjk(s) > 6: continue
             ns = [e for e in _NUM.findall(s) if not (len(e) > 1 and e[0] == '0' and '.' not in e)]
@@ -652,7 +716,73 @@ def _zero_scene(si):
                      f'{nz[0]:.1f} 秒后才是非 0——没念到前先别画（fx.count 从 0 起滚时 t<t0 自动不画），或出现时就是终值'))
     for t0, s, fin in longd.values():
         rows.append((si, li(t0) - 1, t0, '滚动露长小数', f'第 {li(t0)} 句「{s}」，停下来是「{fin[4]}」——fmt 写定小数位，不用 {{:g}}'))
-    return rows
+    return rows + _layout_rows(si, lay, li)
+
+# ---------- 排版：叠压、重影、数字先于卡片（高鑫零售那期画面员第一轮交上来，主控看拼图才发现） ----------
+_REP = re.compile(r'(\d{2,3})\1{2,}')
+def _inter(p, q):
+    w = min(p[2], q[2]) - max(p[0], q[0]); h = min(p[3], q[3]) - max(p[1], q[1])
+    return w * h if w > 0 and h > 0 else 0
+def _inside(c, b): return b[0] <= c[0] <= b[2] and b[1] <= c[1] <= b[3]
+def _layout_rows(si, lay, li):
+    """lay = [(t, [(字, 框, 透明度, 字号)], [(卡片框, 透明度)])]，按 0.5 秒网格。报：
+    文字叠压 = 两行不同的字框重叠超过小的那个的 30%，持续 ≥ 1 秒（一闪而过的转场交错不报）；
+    重影 = 同一串字在同一行错开画了两次以上（飞入拖影，"174747474" 就是这么来的）；一串字里同一段数字连着重复也算；
+    数字先于卡片 = 带数字的字已经清楚（>0.5），它所在的卡片还很淡（<0.35）或 2 秒内才出现"""
+    hit = {}
+    def add(key, cat, t, msg): hit.setdefault(key, [cat, t, msg, set()])[3].add(t)     # 按帧计，一帧只算一次
+    for n, (t, T, cards) in enumerate(lay):
+        for i in range(len(T)):
+            s, b, a, z = T[i]
+            m = _REP.search(s.replace(' ', ''))
+            if m and len(set(m.group(1))) > 1: add(('重', s), '重影', t, f'「{s}」里同一段数字连着重复，多半是滚动 / 飞入时同一串字画了好几遍')
+            for j in range(i + 1, len(T)):
+                s2, b2, _, _ = T[j]; ov = _inter(b, b2)
+                if not ov: continue
+                small = min((b[2] - b[0]) * (b[3] - b[1]), (b2[2] - b2[0]) * (b2[3] - b2[1])) or 1
+                if s == s2:
+                    if abs(b[0] - b2[0]) < 2 and abs(b[1] - b2[1]) < 2: continue          # 原地叠画（加粗 / 描边），不算
+                    if abs(b[1] - b2[1]) < 8: add(('影', s, round(b[1] / 20)), '重影', t, f'「{s}」在同一行错开画了不止一次（飞入 / 移动留下拖影）')
+                elif ov > 0.3 * small and not (s in s2 or s2 in s):
+                    add(('叠', s, s2), '文字叠压', t, f'「{s[:16]}」和「{s2[:16]}」两行字压在一起')
+            if any(ch.isdigit() for ch in s):
+                c = ((b[0] + b[2]) / 2, (b[1] + b[3]) / 2)
+                if any(ca >= 0.35 and _inside(c, cb) for cb, ca in cards): continue
+                weak = any(ca < 0.35 and _inside(c, cb) for cb, ca in cards)
+                # 2 秒内这里出现卡片，而且这串字那时还在原位（换场时旧数字淡出、新卡片落在同一处，不算）
+                late = any(any(ca >= 0.8 and _inside(c, cb) for cb, ca in cs) and
+                           any(s3 == s and abs((b3[0] + b3[2]) / 2 - c[0]) < 12 and abs((b3[1] + b3[3]) / 2 - c[1]) < 12 for s3, b3, _, _ in T3)
+                           for _, T3, cs in lay[n + 1:n + 5])
+                if weak or late: add(('浮', _NUM.sub('#', s), round(c[0] / 60), round(c[1] / 30)), '数字先于卡片', t,
+                                     f'「{s}」已经出现，它所在的卡片{"还很淡" if weak else "还没画出来"}——数字跟着卡片一起淡入，或晚于卡片')
+    rows = []
+    for key, (cat, t, msg, ts) in hit.items():
+        cnt = len(ts)
+        if cat == '文字叠压' and cnt < 2: continue
+        rows.append((si, li(t) - 1, t, cat, f'第 {li(t)} 句起 {msg}（约 {cnt * ZERO_STEP:.1f} 秒）'))
+    return sorted(rows, key=lambda r: r[2])
+
+# ---------- 文字方案的每一章，video.py 里都要有（高鑫零售那期 video.py 交来只有 00 章，其余散在零碎文件里） ----------
+def check_plan():
+    """文字方案.md「逐章脚本」里的 ### NN 章名 和 setup(scenes=…) 逐章对：缺章、分镜函数还是空壳（只画章标题）都报。
+    返回 [说明]；没有文字方案.md 返回 []"""
+    import inspect
+    try: md = open(P('文字方案.md'), encoding='utf-8').read()
+    except Exception: return []
+    plan = [(int(m.group(1)), m.group(2).strip()) for m in re.finditer(r'^###\s*(\d{1,2})\s+([^\s（(]+)', md, re.M)]
+    if not plan: return []
+    sc = C['scenes']; bad = []
+    for n, nm in plan:
+        if n >= len(sc): bad.append(f'第 {n:02d} 章「{nm}」：文字方案里有，video.py 的 scenes 里没有'); continue
+        fn = sc[n][2]
+        try: body = [x for x in inspect.getsource(fn).splitlines()[1:] if x.strip() and not x.strip().startswith('#')]
+        except Exception: body = ['?'] * 9
+        if len(body) <= 3: bad.append(f'第 {n:02d} 章「{nm}」：分镜函数 {getattr(fn, "__name__", "?")} 只有 {len(body)} 行，还是空壳')
+        if sc[n][0] != nm and nm not in sc[n][0] and sc[n][0] not in nm: bad.append(f'第 {n:02d} 章：文字方案叫「{nm}」，video.py 叫「{sc[n][0]}」，核对是不是同一章')
+    fns = [x[2] for x in sc]
+    for i, fn in enumerate(fns):
+        if fns.index(fn) != i: bad.append(f'第 {i:02d} 章和第 {fns.index(fn):02d} 章用的是同一个分镜函数')
+    return bad
 def check_zero():
     """各章按 ZERO_STEP 网格查"数字滚动前先显示 0""滚动中露出长小数"（多进程，不渲染）"""
     from multiprocessing import Pool
@@ -732,10 +862,17 @@ def check_report(rows):
             L.append(f'第 {si:02d} 章 {s0:.1f}~{e:.1f} 秒（{e - s0:.1f} 秒）只有章标题：「{d}」…'); i = j + 1; continue
         L.append(f'第 {si:02d} 章 {s0:.1f} 秒 {kind}：{d}'); i += 1
     return L
+def plan_gate():
+    bad = check_plan()
+    hard = [x for x in bad if '核对是不是同一章' not in x]
+    for x in bad: print('  文字方案 ↔ video.py：' + x)
+    if hard: sys.exit('video.py 没把文字方案的每一章拼进来（上面列的），拼全了再 preview / render')
+    return bad
 def cmd_check():
-    L = check_report(check_scenes())
+    L = ['文字方案 ↔ video.py：' + x for x in check_plan()] + check_report(check_scenes())
     open(P('output', 'check.txt'), 'w', encoding='utf-8').write('\n'.join(L) or '无')
-    print(f'对口型检查（念到的数字画面上有没有、除章标题外有没有内容、有没有空框、字太小、红绿没图例、示意没标、滚动前显示 0、写死的数）：{len(L)} 处 → output/check.txt')
+    print(f'对口型检查（念到的数字画面上有没有、除章标题外有没有内容、有没有空框、字太小、红绿没图例、示意没标、滚动前显示 0、写死的数、'
+          f'文字叠压、重影、数字先于卡片、自动回指压暗没亮对、文字方案缺章）：{len(L)} 处 → output/check.txt')
     for x in L[:12]: print('  ' + x)
     if len(L) > 12: print(f'  …还有 {len(L) - 12} 处，见 output/check.txt')
 
@@ -917,6 +1054,7 @@ def cli():
     only = [int(x) for x in opt('--only').split(',')] if opt('--only') else None
     jobs = int(opt('--jobs')) if opt('--jobs') else None
     if c not in ('tts', 'preview', 'check', 'still', 'frames', 'render', 'mux', 'all'): sys.exit(USAGE)
+    if c in ('preview', 'render', 'all'): plan_gate()
     if c in ('tts', 'all'): cmd_tts()
     if c == 'preview': cmd_preview(only)
     if c == 'check': cmd_check()

@@ -18,7 +18,9 @@ def sig(node, src):
 
 
 def main():
-    out = [__doc__.splitlines()[0], '']
+    out = [__doc__.splitlines()[0], '',
+           '要点：引擎自动"讲到谁亮谁"（念到画面上已有的数 / 短标签，它所在的色块亮、其余压暗）。注释卡、角注里和别处同名的数写 '
+           '`f.text(..., spot=False)`；分镜自己手动压暗做强调的那段调 `own_focus(f)`（`highlight` 自动让位），否则会整屏再压一层。', '']
     for fn in FILES:
         p = os.path.join(HERE, fn)
         src = open(p, encoding='utf-8').read()

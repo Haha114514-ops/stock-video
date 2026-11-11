@@ -13,7 +13,9 @@
   <标题>_管理层讨论与分析.txt
   <标题>_附注_<名>.txt       清单里每一项一份，文件头写页码范围；超过 CAP 字截断并在索引里标出
   <标题>_目录索引.md         各节起始页、切好的段（页码 / 字数）、清单里没切到的项
-fetch_data.py 下载年报 / 半年报后自动调用；季报、港股 PDF 可手动跑（港股版式不同，附注多半切不到，看索引里的"没切到"）。"""
+fetch_data.py 下载年报 / 半年报后自动调用；季报、港股 PDF 可手动跑。
+港股年报 / 中期报告（繁体、香港财务报告准则）自动认出、走另一套：按每页页眉切管理层讨论与分析、关键审计事项、
+四张主表，附注按递增编号切清单里的科目（所得税、租赁、贸易应付、合约负债、物业减值、股息 / 储备等），索引另列附注编号一览。"""
 import bisect, io, os, re, sys
 
 PAGE = '=====PDF第{}页====='
@@ -162,6 +164,146 @@ def cut_span(text, st, en):
         if best is None or e - m.start() > best[1] - best[0]: best = (m.start(), e)
     return best
 
+# ---------- 港股（繁体、香港财务报告准则）----------
+# 港股年报 / 中期报告没有"第X节""合并资产负债表""一、合并财务报表项目注释"，A 股这套一段都切不到（高鑫零售 2025/26 年报切到 0 段，
+# 材料员只能逐页翻）。港股版式：每页页首是栏目页眉（管理層討論與分析 / 獨立核數師報告 / 綜合財務報表附註…）；
+# 附注标题是"编号单独一行（或同一行）+ 科目名"，编号从 1 递增，续页写"（續）"。
+# 先繁→简逐字转换再匹配（一对一，位置不变，切出来的仍是原文），只认递增的编号，表格里"36 / 來自其他來源的收入"这类行不算。
+T2S = str.maketrans('責連發編製賃別頒佈詮釋組須級歷階輸綜財務狀況損現動權變註審計關鍵項層討論與稅貿應負債約資產減僱員儲備銀貸報貨業廠設無後擔聯屬會斷開虧風險價簡團營運經費準據錄東處獨師數撥職離預確認遞國際則選擇績換匯兌歸對為於個這來從時間內長讓證結構測試圍範總額淨購買賣銷攤舊訂協議條號單筆誤實態續併倉庫戶參閱釐貼採遠覆類劃齊屆薪盈稱億萬幣儀濟標標紀錢據辦務圖書訊調證選隨雜寬種創視機構環境衛線', '责连发编制赁别颁布诠释组须级历阶输综财务状况损现动权变注审计关键项层讨论与税贸应负债约资产减雇员储备银贷报货业厂设无后担联属会断开亏风险价简团营运经费准据录东处独师数拨职离预确认递国际则选择绩换汇兑归对为于个这来从时间内长让证结构测试围范总额净购买卖销摊旧订协议条号单笔误实态续并仓库户参阅厘贴采远复类划齐届薪盈称亿万币仪济标标纪钱据办务图书讯调证选随杂宽种创视机构环境卫线')
+def norm(s): return s.translate(T2S)
+HK_PART = {   # 页眉 → 栏目（简体匹配）
+    '管理层讨论与分析': r'管理层讨论(与|及)分析|业务回顾|财务回顾',
+    '核数师报告': r'核数师报告|审计报告|审阅报告',
+    '财务摘要': r'财务摘要|业绩摘要|五年(财务)?概要',
+    '综合损益表': r'综合(损益|收益表)',
+    '综合财务状况表': r'综合财务状况表',
+    '综合权益变动表': r'综合权益变动表',
+    '综合现金流量表': r'综合现金流量表',
+    '财务报表附注': r'(财务报表|财务资料)附注',
+}
+HK_NOTES = {  # 附注科目名（去掉"（续）"后）→ 正则；同名取编号最小的一条
+    '收入及分部': r'收入|营业额|分部',
+    '除税前溢利（费用明细）': r'除税前(溢利|利润|亏损)|经营(溢利|利润)',
+    '所得税': r'^(综合损益[^\n]{0,10})?所得税(开支|费用)?$|^税项$',
+    '财务状况表内的所得税（递延税项）': r'财务状况表内的所得税|递延税项',
+    '投资物业及物业厂房设备（含减值）': r'物业、?厂房及设备|投资物业',
+    '使用权资产': r'使用权资产',
+    '存货': r'^存货',
+    '贸易及其他应收款项': r'贸易[^\n]{0,6}应收',
+    '贸易及其他应付款项': r'贸易[^\n]{0,6}应付',
+    '合约负债': r'合约负债',
+    '银行贷款及借款': r'银行(贷款|借款)|^借款',
+    '租赁负债': r'租赁负债|^租赁$',
+    '现金及现金等价物': r'现金及现金等价物',
+    '雇员福利': r'雇员福利|员工福利|退休福利|离职后福利|员工成本|雇员成本',
+    '股本、储备及股息': r'股息|股本',
+    '本公司财务状况及储备（可供分派储备）': r'本公司[^\n]{0,6}(财务状况|储备)|可供分派储备',
+    '关键会计估计及判断': r'关键会计估计|会计判断',
+    '金融风险管理': r'金融风险|财务风险',
+    '承担及或然事项': r'承担|或然',
+    '关联方交易': r'关(联|连)(方|人士)交易',
+    '附属公司权益': r'附属公司',
+    '期后事项': r'期后事项|报告期后|结算日后|日期?后[^\n]{0,6}事项',
+}
+HK_HINT = {'雇员福利': '员工成本多半在「除税前溢利」附注里，搜「員工成本」「薪金」'}
+KAM_END = re.compile(r'^[ \t]*(其他信息|[^\n]{0,20}以外的信息|[^\n]{0,16}须承担的责任|核数师就[^\n]*承担的责任)', re.M)
+AMOUNT = re.compile(r'^[ \t]*[(（\-–—]?[\d,，.]+[)）]?[ \t]*$')
+
+def is_hk(text):
+    return '综合财务状况表' in norm(text[:400000]) and '合并资产负债表' not in text
+
+def hk_pages(text, N):
+    """[(页码, 起, 止, 页眉)]：页眉 = 页首几行里第一行不是纯数字、不是每页都有的公司名 / 报告名的那行（去掉"（续）"）"""
+    from collections import Counter
+    ms = list(PAGE_RE.finditer(text)); pages, heads = [], []
+    for i, m in enumerate(ms):
+        a = m.end(); b = ms[i + 1].start() if i + 1 < len(ms) else len(text)
+        heads.append([l.strip() for l in N[a:b].split('\n') if l.strip()][:4]); pages.append((int(m.group(1)), a, b))
+    cnt = Counter(l for h in heads for l in set(h))
+    boiler = {l for l, c in cnt.items() if c > 0.6 * len(heads) and not any(re.search(kw, l) for kw in HK_PART.values())}
+    out = []
+    for (no, a, b), h in zip(pages, heads):
+        hd = next((l for l in h if not re.fullmatch(r'[\d\s/╱\-–]+', l) and l not in boiler), '')
+        out.append((no, a, b, re.sub(r'[（(]续[)）]$', '', hd)))
+    return out
+
+def hk_parts(pages):
+    """栏目 → 页眉连续命中最长的一段 (首页, 末页, 起, 止)；目录页只一页，正文那段更长"""
+    got = {}
+    for name, kw in HK_PART.items():
+        run = best = None
+        for no, a, b, hd in pages:
+            if hd and len(hd) <= 30 and re.search(kw, hd):
+                run = (run[0], no, run[2], b) if run and run[1] == no - 1 else (no, no, a, b)
+                if best is None or run[1] - run[0] > best[1] - best[0]: best = run
+        if best: got[name] = best
+    return got
+
+def hk_notes(N, region):
+    """附注区里递增编号的标题 → [(编号, 科目名, 起, 止)]；下一行是金额的是表格行，编号不接着上一条的不算"""
+    a, b = region; hs = []
+    for m in re.finditer(r'^[ \t]*(\d{1,2})[ \t]*(?:[.、．][ \t]*)?(?:\n[ \t]*|[ \t]+)([一-鿿][^\n]{0,40}?)[ \t]*$', N[a:b], re.M):
+        nxt = re.search(r'\n[ \t]*([^\n]*\S)', N[a + m.end():a + m.end() + 200])
+        if nxt and AMOUNT.match(nxt.group(1)) and not re.fullmatch(r'(19|20)\d\d', nxt.group(1).strip()): continue
+        hs.append((int(m.group(1)), m.group(2), a + m.start()))
+    notes = []; cur = 0
+    for n, tt, p in hs:
+        if n == cur + 1:
+            if notes: notes[-1][3] = p
+            notes.append([n, re.sub(r'[（(]续[)）]$', '', tt).strip(), p, b]); cur = n
+    return [tuple(x) for x in notes]
+
+def cut_hk(text, extra=()):
+    """返回 (切好的段 [(名, 起, 止)], 没切到 [(名, 提示)], 原文定位 [(名, 页)], 各节 [(页眉, 首页)], 附注一览 [(编号, 名, 页)])"""
+    N = norm(text); pg = Pages(text); pages = hk_pages(text, N); parts = hk_parts(pages)
+    segs, miss, marks = [], [], []
+    if '管理层讨论与分析' in parts: segs.append(('管理层讨论与分析', *parts['管理层讨论与分析'][2:]))
+    else: miss.append(('管理层讨论与分析', '搜「管理層討論」「業務回顧」「財務回顧」'))
+    if '财务摘要' in parts: segs.append(('财务摘要', *parts['财务摘要'][2:]))
+    au = parts.get('核数师报告')
+    k = re.search(r'^[ \t]*关键审计事项[ \t]*$', N[au[2]:au[3]], re.M) if au else None
+    if k:
+        st = au[2] + k.start(); e = KAM_END.search(N, st + 20, au[3])
+        segs.append(('关键审计事项', st, e.start() if e else au[3]))
+    elif au: miss.append(('关键审计事项', '搜「關鍵審計事項」（中期报告是审阅报告，没有这一节）'))
+    for name in ('综合损益表', '综合财务状况表', '综合权益变动表', '综合现金流量表'):
+        if name in parts: segs.append((name, *parts[name][2:])); marks.append((name, parts[name][0]))
+        else: miss.append((name, f'搜「{name}」（繁体）'))
+    notes = hk_notes(N, parts['财务报表附注'][2:]) if '财务报表附注' in parts else []
+    want = dict(HK_NOTES); want.update({norm(x): re.escape(norm(x)) for x in extra})
+    for name, kw in want.items():
+        hit = next((x for x in notes if re.search(kw, x[1])), None)
+        if hit: segs.append((f'{hit[0]}_{name}', hit[2], hit[3]))
+        else: miss.append((name, HK_HINT.get(name, f'搜「{name}」（繁体）') + ('' if notes else '（没认出附注编号标题）')))
+    secs = []; prev = None
+    for no, a, b, hd in pages:
+        if hd != prev and hd and len(hd) <= 30 and sum(1 for x in pages if x[3] == hd) >= 2: secs.append((hd, no))
+        prev = hd
+    return segs, miss, marks, secs, [(n, t, pg.at(p)) for n, t, p, _ in notes]
+
+def cut_hk_write(text, pg, outdir, title, extra, save, got, miss, trunc):
+    segs, ms, marks, secs, notes = cut_hk(text, extra)
+    for name, a, b in segs: save(name, (a, b), None if name[0].isdigit() or name == '关键审计事项' else name)
+    miss += ms
+    L = [f'# {title} 目录索引（港股版式：繁体、香港财务报告准则）', '',
+         f'全文 {pg.no[-1] if pg.no else 0} 页、{len(text)} 字：`{title}_全文.txt`（每页前一行 `=====PDF第N页=====`）。',
+         '先读这份索引和下面切好的段；清单外的内容在全文里搜关键词（繁体），只读命中的那几页，不通读全文。',
+         '科目对照：綜合財務狀況表 = 资产负债表，綜合損益表 = 利润表，貿易應付款項 ≈ 应付账款，合約負債 ≈ 合同负债，'
+         '除稅前溢利 = 利润总额，核數師 = 审计师，附屬公司 = 子公司。', '',
+         '## 各节起始页（按每页页眉）', '']
+    L += [f'- {nm}：第 {p} 页' for nm, p in secs] or ['- （没认出页眉）']
+    L += ['', '## 切好的段', '', '| 段 | 页码 | 字数 | 文件 |', '|---|---|---|---|']
+    L += [f'| {n}{"（截断）" if n in trunc else ""} | {s} | {c} | `{f}` |' for n, s, c, f in got]
+    L += ['', '## 附注编号一览（清单外的科目按这里的页码到全文里读）', '']
+    L += [f'- 附注 {n} {t}：第 {p} 页' for n, t, p in notes] or ['- （没认出附注编号标题）']
+    L += ['', '## 原文定位（只给起始页）', '']
+    L += [f'- {n}：第 {p} 页' for n, p in marks] or ['- 无']
+    L += ['', '## 清单里没切到的（不等于报告里没有：去全文里搜，查过写"查过：…"）', '']
+    L += [f'- {n}：{h}' for n, h in miss] or ['- 无']
+    if trunc: L += ['', f'截断的段只存了前 {CAP} 字，后面的去全文里按页码接着读。']
+    open(os.path.join(outdir, f'{title}_目录索引.md'), 'w', encoding='utf-8').write('\n'.join(L) + '\n')
+    return f'{title}（港股版式）全文{len(text)}字 / 切到 {len(got)} 段 / 没切到 {len(miss)} 项' + (f'（{"、".join(n for n, _ in miss)}）' if miss else '')
+
 # ---------- 主流程 ----------
 def sections(text, pg):
     """各节起始页：每个"第X节 名"取最后一次出现（第一次多半在目录里）。"""
@@ -177,6 +319,7 @@ def cut(pdf, outdir, title, extra=()):
     w = lambda name, s: open(os.path.join(outdir, f'{title}_{name}.txt'), 'w', encoding='utf-8').write(s)
     w('全文', text)
     got, miss, trunc, loose = [], [], [], []
+    hk = is_hk(text)
 
     def save(name, ab, fname=None):
         a, b = ab; seg = text[a:b]
@@ -186,6 +329,7 @@ def cut(pdf, outdir, title, extra=()):
         w(fname or f'附注_{name}', f'【{title}·{name}，PDF {span}】\n' + seg)
         got.append((name, span, len(seg), f'{title}_{fname or "附注_" + name}.txt'))
 
+    if hk: return cut_hk_write(text, pg, outdir, title, extra, save, got, miss, trunc)
     mda = extract_mda(text)
     if mda[1] - mda[0] >= 2000: save('管理层讨论与分析', mda, '管理层讨论与分析')
     else: miss.append(('管理层讨论与分析', '搜「管理层讨论与分析」「经营情况讨论与分析」'))

@@ -229,8 +229,10 @@ def arrow(f, t, t0, p0, p1, col=GOLD, w=4, d=0.5, bend=0.2, head=20, a=1.0, wobb
 
 def highlight(f, t, t0, box, col=GOLD, d=0.4, a=0.3, pad=(10, 4), skew=None):
     """整段提亮：box 这一段（色条的一段、图上一个区间）本身变亮、带柔光，col 薄铺一层；不画荧光笔、不贴小标签。
-    要先亮再写字就在写字之前调用。a 是强度，0.3 算满（旧工程传的 0.1~0.35 照用）。返回进度。"""
+    要先亮再写字就在写字之前调用。a 是强度，0.3 算满（旧工程传的 0.1~0.35 照用）。返回进度。
+    调了它，这一帧引擎自动的"讲到谁亮谁"让位（分镜自己在强调，不再整屏压一层）。"""
     if a <= 0.01 or t < t0: return 0.0
+    f.own = True
     p = eo(pg(t, t0, d)); x0, y0, x1, y1 = box; px, py = pad
     glow(f, (x0 - px, y0 - py, x1 + px, y1 + py), p * clamp(a / 0.3), col)
     return p

@@ -218,7 +218,7 @@ def main():
     print('静止段…'); fz = freezes(video)
     miss = numbers(lines, facts) if facts else []
     lrows, has_labels = label_table(lines, facts) if facts else ([], False)
-    try: chk = M.check_report(M.check_scenes()) if M else None
+    try: chk = (['文字方案 ↔ video.py：' + x for x in M.check_plan()] + M.check_report(M.check_scenes())) if M else None
     except Exception as e: print('对口型检查失败：', e); chk = None
 
     def chap(x): return max(i for i, s in enumerate(sc) if s['off'] <= x + 1e-6)
@@ -229,7 +229,7 @@ def main():
     for si, s in enumerate(sc):
         L.append(f'### {si:02d} {names[si]}（{mmss(s["off"])} 起，{s["T"]:.0f} 秒）  拼图：`ch_{si:02d}.png`')
         L += [f'{li + 1}. {x}' for li, x in enumerate(lines[si])]; L.append('')
-    L += ['## 念到的东西，画面上有没有（每条字幕念完前一刻，按分镜实际画了什么查）', '']
+    L += ['## 念到的东西，画面上有没有；排版（叠压、重影、数字先于卡片、自动回指压暗没亮对）；文字方案每章都拼进来没有', '']
     L += [f'- {x}' for x in chk] if chk else ['- 无'] if chk is not None else ['- 没跑成（读不到 video.py）']
     L += ['', '## 静止段（内容区 3 秒以上不动；只有字幕在变也算不动）', '',
           f'共 {len(fz)} 段，合计 {sum(d for _, d in fz):.0f} 秒，占全片 {sum(d for _, d in fz) / total * 100:.0f}%（只报数）。超过 {still_max():.0f} 秒的（必须补）：', '']
