@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """港股个股数据抓取（东财 / 新浪 / 百度），失败项记日志不中断。fetch_data.py 只管 A 股，港股用这个。
-用法：python fetch_hk.py <代码如03918> <输出目录> [同行港股代码 ...]
+用法：python fetch_hk.py <代码如03918> <输出目录> [同行港股代码 ...] [--sub=上市子公司代码1,代码2]
 产出：
   price.csv            日线（不复权；东财断连回退新浪）  列：日期,open,最高,最低,收盘,volume,amount
   price_qfq.csv        前复权日线（算长期涨跌用）
@@ -9,16 +9,21 @@
   val_pe_ttm.csv / val_pb.csv / val_mcap.csv   百度估值序列（近十年，5 天一点）
   dividend.csv         东财派息记录（含每股派息、币种、除净日）
   profile.csv          公司资料
-  comp_<代码>_*.csv    同行：三大表利润表 + 百度 PE/PB
+  comp_<代码>_*.csv    同行：利润表、资产负债表（年度）+ 百度 PE/PB
+  fx.csv               人民银行人民币中间价（港元、美元，每 100 外币；截止日汇率从这里取）
+  sub_<代码>_mcap.csv  --sub 给的上市子公司百度总市值（控股公司对比子公司市值用）
+读表底稿：抓完跑 python extract_facts_hk.py <工程> → <工程>/facts.md。
   fetch_log.json
 港股年报/中报原文不自动抓：去 hkexnews.hk（披露易）下载 PDF 放进 <工程>/data/reports/，
-用 fitz 抽文本后在 facts.py 里逐条注明页码（口径见 方法与口径 §1 港股条）。"""
+跑 report_cut.py 切段（港股版式自动认出），读 _目录索引.md 和切好的段，facts.py 里逐条注明页码（口径见 方法与口径 §1 港股条）。"""
 import io, json, os, sys, time, traceback
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
 import warnings; warnings.filterwarnings('ignore')
 import akshare as ak
 
 args = [a for a in sys.argv[1:] if not a.startswith('--')]
+opt = dict(a[2:].split('=', 1) for a in sys.argv[1:] if a.startswith('--') and '=' in a)
+subs = [x.zfill(5) for x in opt.get('sub', '').split(',') if x]
 if len(args) < 2 or not args[0].isdigit(): sys.exit(__doc__)
 code, OUT, peers = args[0].zfill(5), args[1], [p.zfill(5) for p in args[2:]]   # 港股代码补足 5 位：3918 → 03918
 os.makedirs(OUT, exist_ok=True)
@@ -57,10 +62,17 @@ for ind, nm in (('市盈率(TTM)', 'val_pe_ttm.csv'), ('市净率', 'val_pb.csv'
     grab(nm, ak.stock_hk_valuation_baidu, symbol=code, indicator=ind, period='近十年')
 grab('dividend.csv', ak.stock_hk_dividend_payout_em, symbol=code)
 grab('profile.csv', ak.stock_hk_company_profile_em, symbol=code)
+def fx():
+    df = ak.currency_boc_safe()
+    return df[['日期', '港元', '美元']].tail(4000)
+grab('fx.csv', fx)
 for p in peers:
     grab(f'comp_{p}_is.csv', ak.stock_financial_hk_report_em, stock=p, symbol='利润表', indicator='年度')
+    grab(f'comp_{p}_bs.csv', ak.stock_financial_hk_report_em, stock=p, symbol='资产负债表', indicator='年度')
     grab(f'comp_{p}_pe.csv', ak.stock_hk_valuation_baidu, symbol=p, indicator='市盈率(TTM)', period='近十年')
     grab(f'comp_{p}_pb.csv', ak.stock_hk_valuation_baidu, symbol=p, indicator='市净率', period='近十年')
+for p in subs:
+    grab(f'sub_{p}_mcap.csv', ak.stock_hk_valuation_baidu, symbol=p, indicator='总市值', period='近十年')
 with open(os.path.join(OUT, 'fetch_log.json'), 'w', encoding='utf-8') as fp: json.dump(log, fp, ensure_ascii=False, indent=1)
 fails = [k for k, v in log.items() if str(v).startswith('FAIL')]
 if fails: print('失败项（详见 fetch_log.json）：', '、'.join(fails))
