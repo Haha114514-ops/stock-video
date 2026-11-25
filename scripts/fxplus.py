@@ -256,12 +256,14 @@ def underline(f, t, t0, x0, x1, y, col=GOLD, w=4, d=0.45, a=1.0, wobble=3.0, see
 
 # ---------- 瀑布图 ----------
 def waterfall(f, t, t0, box, steps, stagger=0.55, d=0.6, vmax=None, vmin=None, fmt='{:.0f}', a=1.0, total_col=GOLD,
-              up_col=RED, down_col=GREEN, connectors=True, lsize=22, vsize=26, bar=0.58, signed=True):
+              up_col=RED, down_col=GREEN, connectors=True, lsize=22, vsize=26, bar=0.58, signed=True, end_col=TEAL, zero=True):
     """瀑布图：steps = [(标签, 值, 种类), ...]，种类 'total' 从 0 画到值（值写 None 就取前面累计的结果），
     'delta'（默认，可省）从当前累计往上加 / 往下减——减项从上一根的水平线往下长。第 i 根在 t0 + i*stagger 开始；
     t0 也可以是列表（每根一个开始时刻，如 [B.at(2,'收入'), B.at(2,'毛利率'), …]），这样每根柱挂到旁白念到它的那个词上。
     颜色：总量 total_col，加项 up_col，减项 down_col（默认红加绿减；红绿表示好坏时记得配 components.legend）。
-    signed=True 增减项数字带 +/−。返回 [(柱中心 x, 柱顶 y, 柱底 y), ...]。"""
+    signed=True 增减项数字带 +/−。起点和终点分色：第一根 total 用 total_col，最后一根 total 用 end_col（end_col=None 时同色）。
+    zero=False：纵轴下限跟数据走（总量大、增减小时用，不然增减项只剩一条缝）——total 柱从图框底边画起，左下角注"纵轴截断"。
+    返回 [(柱中心 x, 柱顶 y, 柱底 y), ...]。"""
     if a <= 0.01: return []
     t_at = (lambda i: t0[min(i, len(t0) - 1)]) if isinstance(t0, (list, tuple)) else (lambda i: t0 + i * stagger)
     rows, cur = [], 0.0
@@ -273,13 +275,20 @@ def waterfall(f, t, t0, box, steps, stagger=0.55, d=0.6, vmax=None, vmin=None, f
             rows.append((lab, cur, cur + v, v, kind)); cur += v
     lv = [r[1] for r in rows] + [r[2] for r in rows]
     vmax = vmax if vmax is not None else max(lv) * 1.12
-    vmin = vmin if vmin is not None else min(0.0, min(lv) * 1.12)
+    if vmin is None:
+        if zero: vmin = min(0.0, min(lv) * 1.12)
+        else:
+            lv2 = [r[2] for r in rows] + [r[1] for r in rows if r[4] != 'total']; span = max(lv2) - min(lv2) or abs(max(lv2)) or 1
+            vmin = min(lv2) - span * 1.2            # total 柱留出和增减项差不多的高度
     x0, y0, x1, y1 = box; n = len(rows); slot = (x1 - x0) / n; bw = slot * bar
+    tots = [i for i, r in enumerate(rows) if r[4] == 'total']
+    if vmin > 0: f.text((x0, y1 + 50), '纵轴截断', 20, DIM, a, 'r', 'lm')
     Y = lambda v: ymap(box, v, vmin, vmax); out_ = []
     if vmin < 0: f.line([(x0, Y(0)), (x1, Y(0))], GRID, 1, 0.6 * a)
     for i, (lab, frm, to, v, kind) in enumerate(rows):
         cx = x0 + slot * (i + 0.5); p = eio(pg(t, t_at(i), d)) if t >= t_at(i) else 0.0
-        c = total_col if kind == 'total' else (up_col if v >= 0 else down_col)
+        c = (end_col if (end_col and len(tots) > 1 and i == tots[-1]) else total_col) if kind == 'total' else (up_col if v >= 0 else down_col)
+        if kind == 'total' and vmin > 0: frm = vmin
         end = lerp(frm, to, p); ya, yb = Y(frm), Y(end)
         top, bot = min(ya, yb), max(ya, yb); out_.append((cx, min(Y(frm), Y(to)), max(Y(frm), Y(to))))
         f.text((cx, y1 + 24), str(lab), lsize, DIM, a, 'b', 'mm')

@@ -476,11 +476,13 @@ def beats_of(sc, si=None):
 # 字幕切到下一个子句时，如果这句念到的数字已经在画面上（之前就画好了），它所在的那一块整体提亮、带柔光并慢呼吸，
 # 直到这条字幕念完。新出现的元素不加（它自己的出场动画就是强调）。观众的眼睛跟着声音走，长句也不会整段僵住。
 _NUM = re.compile(r'(?<![\d.])(\d+(?:\.\d+)?)(?![\d.])')
+def _thou(s): return re.sub(r'(?<=\d),(?=\d{3}(?!\d))', '', s)      # 千分位 "1,200" 当 1200
 def _spoken_nums(s):
-    o = []
+    """旁白里要上画面的数：年份、"9 月末""2 月 25 日""6 号"这类日期不算（数字和月 / 日之间可以有空格）"""
+    o = []; s = _thou(s)
     for m in _NUM.finditer(s):
-        n = m.group(1); tail = s[m.end():m.end() + 1]
-        if re.fullmatch(r'(19|20)\d\d', n) or tail in ('月', '日', '号', '年'): continue
+        n = m.group(1); tail = s[m.end():m.end() + 3].lstrip()[:1]
+        if re.fullmatch(r'(19|20)\d\d', n) or tail in ('日', '号', '年') or (tail == '月' and float(n) <= 12 and '.' not in n): continue
         o.append(n)
     return o
 def _cjk(s): return sum(1 for ch in s if '一' <= ch <= '鿿')
@@ -615,15 +617,17 @@ def spotlight(f, si, t, sc):
 # ---------- 对口型检查：念到的东西，画面上有没有 ----------
 # 不渲染，按每条字幕念完前的时刻跑一遍分镜函数，看画面上记下的字。
 # freezedetect 量的是整帧像素，字幕一直在换，"只有章标题、旁白已经念了十几秒"量不出来（紫金 R1 结论章 17 秒）。
-def _vals(s): return [float(e) for e in _NUM.findall(s) if not (len(e) > 1 and e[0] == '0' and '.' not in e)]
+def _vals(s): return [float(e) for e in _NUM.findall(_thou(s)) if not (len(e) > 1 and e[0] == '0' and '.' not in e)]
 def _shown(n, vals):
     c = float(n); dc = len(n.split('.')[1]) if '.' in n else 0
     return any(v == c or (dc >= 1 and round(v, dc) == c) or (dc == 0 and c >= 10 and abs(v - c) <= 0.5) for v in vals)
 _SCHEMA = re.compile(r'(公司|项目|子公司|门店|业务)\s?[A-Z甲乙丙](?![A-Za-z])')
-def check_scenes():
+CHECK_AFTER = 1.0       # 念完后多少秒内数字落定也算"上了画面"（fx.count 默认滚 1.2 秒，念到时才起滚的数在句末往往还在途中）
+def check_scenes(only=None):
     """返回 [(章, 字幕序号, 章内秒, 类别, 说明)]。类别：只有标题 / 数字没上画面 / 空框 / 字太小 / 红绿没图例 / 示意没标 / 滚动前显示0 / 滚动露长小数 / 写死的数（章为 None）"""
     tl, total = load_tl(); out_ = []
     for si, sc in enumerate(tl):
+        if only is not None and si not in only: continue
         B = beats_of(sc, si); fn = C['scenes'][si][2]; seen = set()
         for k, (s0, e, txt) in enumerate(sc['subs']):
             tt = max(s0 + 0.1, e - 0.15)
@@ -644,6 +648,13 @@ def check_scenes():
             if not con and e - s0 >= 1.2: out_.append((si, k, s0, '只有标题', txt))
             vals = [v for s, _ in con for v in _vals(s)]
             miss = [n for n in _spoken_nums(txt) if not _shown(n, vals)]
+            if miss:                                  # 只取字幕末尾一个点会误报：元素念到一半就淡出了 / fx.count 还在滚。
+                for tx in (s0 + (e - s0) * 0.5, min(e + CHECK_AFTER, sc['T'] - 0.05)):   # 句中、念完后 CHECK_AFTER 秒内出现过终值都算上了画面
+                    g = Frame(background()); g.rec = []; g.cards = []; g.fills = set(); g.blocks = []; NOW[0] = tx
+                    fn(g, tx, B, sc['T'])
+                    vals += [v for i, (s_, _, a_, _) in enumerate(g.rec) if a_ > 0.5 and i >= g.cover and i not in g.heads for v in _vals(s_)]
+                NOW[0] = tt
+                miss = [n for n in miss if not _shown(n, vals)]
             if miss: out_.append((si, k, s0, '数字没上画面', '、'.join(miss) + '｜' + txt))
             for box, a, ri in f.cards:
                 if a < 0.5 or ri < f.cover: continue          # 被压暗卡盖住的框不算
@@ -653,7 +664,7 @@ def check_scenes():
             if spot and (spot[0], si, _sent_start(sc, si, s0)) not in seen:
                 seen.add((spot[0], si, _sent_start(sc, si, s0))); out_.append((si, k, s0, spot[0], spot[1] + '｜' + txt))
     NOW[0] = 0
-    return out_ + check_zero() + check_source()
+    return out_ + check_zero(only) + check_source()
 
 def _check_spot(si, k, sc, f, tt):
     """自动回指在这条字幕会不会"整屏压暗、该亮的没亮"：
@@ -691,8 +702,9 @@ def _zero_scene(si):
                     [(b, a) for b, a, ri in f.cards]))
         for s, (x0, y0, x1, y1), a, _ in f.rec[f.cover:]:
             if a < 0.5 or _cjk(s) > 6: continue
-            ns = [e for e in _NUM.findall(s) if not (len(e) > 1 and e[0] == '0' and '.' not in e)]
-            if ns: occ.append((t, _NUM.sub('#', s), (x0 + x1) / 2, (y0 + y1) / 2, s, ns, x0, x1))
+            s1 = re.split(r'\s*[→➜]', s)[0] if re.search(r'\d', re.split(r'\s*[→➜]', s)[0]) else s   # "0.0 亿 → 12.3 亿" 只看箭头前（起始值）
+            ns = [e for e in _NUM.findall(s1) if not (len(e) > 1 and e[0] == '0' and '.' not in e)]
+            if ns: occ.append((t, _NUM.sub('#', s1), (x0 + x1) / 2, (y0 + y1) / 2, s, ns, x0, x1))
     NOW[0] = 0
     # 同一个元素：格式一样、同一行，中心 / 左端 / 右端之一对得上（滚数时宽度会变）
     same = lambda p, q: p[1] == q[1] and abs(p[3] - q[3]) < 10 and (abs(p[2] - q[2]) < 40 or abs(p[6] - q[6]) < 6 or abs(p[7] - q[7]) < 6)
@@ -783,10 +795,12 @@ def check_plan():
     for i, fn in enumerate(fns):
         if fns.index(fn) != i: bad.append(f'第 {i:02d} 章和第 {fns.index(fn):02d} 章用的是同一个分镜函数')
     return bad
-def check_zero():
+def check_zero(only=None):
     """各章按 ZERO_STEP 网格查"数字滚动前先显示 0""滚动中露出长小数"（多进程，不渲染）"""
     from multiprocessing import Pool
     tl, _ = load_tl(); mf = getattr(sys.modules.get('__main__'), '__file__', '') or ''
+    if only is not None:
+        return [r for si in only if 0 <= si < len(tl) for r in _zero_scene(si)]
     if os.path.abspath(mf) == os.path.abspath(P('video.py')):      # video.py 直接跑：子进程能重新 import 分镜
         with Pool(min(sysenv.jobs(), len(tl))) as pool: res = pool.map(_zero_scene, range(len(tl)))
     else: res = [_zero_scene(si) for si in range(len(tl))]          # review_pack 用 runpy 读进来的：单进程
@@ -868,16 +882,56 @@ def plan_gate():
     for x in bad: print('  文字方案 ↔ video.py：' + x)
     if hard: sys.exit('video.py 没把文字方案的每一章拼进来（上面列的），拼全了再 preview / render')
     return bad
-def cmd_check():
-    L = ['文字方案 ↔ video.py：' + x for x in check_plan()] + check_report(check_scenes())
-    open(P('output', 'check.txt'), 'w', encoding='utf-8').write('\n'.join(L) or '无')
+HARD = ('数字没上画面', '写死的数', '滚动前显示0', '滚动露长小数')   # 硬伤：不改不许 render；只有章标题超过 STILL_MAX 秒也算
+def _is_hard(row): return row[3] in HARD               # "只有标题"单条不算，合并成段后在 _hard_count 里按时长判
+def _hard_count(rows, plan_bad):
+    """硬伤条数：缺章（plan_gate 已挡）、数字没上画面、写死的数、滚动前显示 0 / 露长小数、只有章标题超过 STILL_MAX 秒"""
+    n = sum(1 for x in plan_bad if '核对是不是同一章' not in x) + sum(1 for r in rows if _is_hard(r))
+    tl = load_tl()[0]; i = 0
+    while i < len(rows):
+        if rows[i][3] != '只有标题' or rows[i][0] is None: i += 1; continue
+        j = i
+        while j + 1 < len(rows) and rows[j + 1][0] == rows[i][0] and rows[j + 1][3] == '只有标题' and rows[j + 1][1] == rows[j][1] + 1: j += 1
+        if tl[rows[i][0]]['subs'][rows[j][1]][1] - rows[i][2] > STILL_MAX: n += 1
+        i = j + 1
+    return n
+def _stamp():
+    """video.py / facts.json / timeline.json 的指纹：check 之后有没有再改过"""
+    import hashlib
+    h = hashlib.md5()
+    for fn in ('video.py', 'facts.json', 'timeline.json'):
+        try: h.update(open(P(fn), 'rb').read())
+        except Exception: h.update(b'-')
+    return h.hexdigest()
+def cmd_check(only=None):
+    """对口型检查 → output/check.txt（不出拼图）。返回硬伤条数；同时记下指纹，render 用它判断"最后一次改动之后 check 过没有"。
+    only=[章号] 只查这几章（写死的数、文字方案缺章照样全查）"""
+    plan_bad = check_plan(); rows = check_scenes(only)
+    hard = _hard_count(rows, plan_bad)
+    L = ['文字方案 ↔ video.py：' + x for x in plan_bad] + check_report(rows)
+    head = f'硬伤 {hard} 处（数字没上画面、写死的数、滚动前显示 0 / 露长小数、只有章标题超过 {STILL_MAX:.0f} 秒、缺章；不为 0 不能 render）；全部 {len(L)} 处' +            (f'（只查了第 {",".join(map(str, only))} 章）' if only is not None else '')
+    open(P('output', 'check.txt'), 'w', encoding='utf-8').write('\n'.join([head, ''] + (L or ['无'])))
+    json.dump({'stamp': _stamp(), 'hard': hard, 'only': only}, open(P('output', 'check.stamp.json'), 'w', encoding='utf-8'))
     print(f'对口型检查（念到的数字画面上有没有、除章标题外有没有内容、有没有空框、字太小、红绿没图例、示意没标、滚动前显示 0、写死的数、'
-          f'文字叠压、重影、数字先于卡片、自动回指压暗没亮对、文字方案缺章）：{len(L)} 处 → output/check.txt')
+          f'文字叠压、重影、数字先于卡片、自动回指压暗没亮对、文字方案缺章）：{head} → output/check.txt')
     for x in L[:12]: print('  ' + x)
     if len(L) > 12: print(f'  …还有 {len(L) - 12} 处，见 output/check.txt')
+    return hard
+def render_gate(only=None, force=False):
+    """render 前：最后一次改动（video.py / facts.json / timeline.json）之后要有一次 check，而且硬伤为 0。
+    指纹对得上（check 之后没再改过）就不重跑；--force 跳过（交付说明里写明为什么）"""
+    if force: print('render --force：跳过 check 门禁'); return
+    try: st = json.load(open(P('output', 'check.stamp.json'), encoding='utf-8'))
+    except Exception: st = {}
+    fresh = st.get('stamp') == _stamp() and (st.get('only') is None or (only is not None and set(only) <= set(st['only'])))
+    hard = st['hard'] if fresh else None
+    if hard is None:
+        print('render 前先跑 check（上次 check 之后改过 video.py / facts.json / 时间轴，或还没跑过）…')
+        hard = cmd_check(only)
+    if hard: sys.exit(f'check 还有 {hard} 处硬伤（见 output/check.txt 第一行起），改完再 render；确实是误报才加 --force，并在交回的消息里写明')
 
 # ---------- 静止段（57号）：preview 阶段就按分镜函数抽帧查"3 秒以上不动" ----------
-# 判定和 review_pack 的 ffmpeg freezedetect 一致：只量内容区 y 120~920（字幕、进度条在换不算动），
+# 判定和审片包是同一个函数 still_segs（2026-11-25 起；以前审片包用 ffmpeg freezedetect，段数、占比对不上）：只量内容区 y 120~920（字幕、进度条在换不算动），
 # 相邻两帧平均像素差 < STILL_N 算没动，连续 ≥ STILL_D 秒算一段。区别是不用等成片，而且能说出卡在哪一句、念到哪。
 # 57号补丁七：不再设总占比目标（30% 逼着反复补节拍，观众看不出差别）；单段超过 STILL_MAX 秒才必须补，总占比只报数。
 # plan_check.py 从这里读 STILL_MAX，文字方案阶段用同一个线查"两个触发词隔太久"。
@@ -891,6 +945,10 @@ def _still_scene(si):
         a = np.asarray(im, np.float32) / 255
         if prev is not None: diffs.append(float(np.abs(a - prev).mean()))
         prev = a
+    return si, still_segs(ts, diffs)
+def still_segs(ts, diffs):
+    """静止段的唯一算法（preview 的 still.txt 和审片包共用）：ts 是 STILL_STEP 网格上的时刻，diffs[k] = 第 k、k+1 帧
+    内容区（y 120~920，灰度缩到 480×200）的平均像素差；连续 < STILL_N 且 ≥ STILL_D 秒算一段。按章算，段不跨章"""
     segs = []; k = 0
     while k < len(diffs):
         if diffs[k] < STILL_N:
@@ -900,7 +958,7 @@ def _still_scene(si):
             if s1 - s0 >= STILL_D: segs.append((s0, s1))
             k = j + 1
         else: k += 1
-    return si, segs
+    return segs
 def _still_where(si, s0, s1):
     """静止段落在哪一句、这几秒在念什么——改法：把这段话里的数 / 词挂到 B.at(句, '…')"""
     tl, _ = load_tl(); sc = tl[si]; B = beats_of(sc, si)
@@ -1000,7 +1058,7 @@ def cmd_preview(only=None):
     for r, ims in enumerate(rows):
         for c, im in enumerate(ims): sheet.paste(im.resize((tw_, th_), Image.LANCZOS), (c * tw_, r * th_))
     sheet.save(P('output', 'preview_sheet.png')); print('preview', P('output', 'preview_sheet.png'))
-    cmd_check()
+    cmd_check(only)
     if only is None: cmd_still()          # 57号：静止段在 preview 就报，不等成片
 
 def cmd_render(resume=False, only=None, jobs=None):
@@ -1038,9 +1096,11 @@ def cmd_mux():
 USAGE = """用法：python video.py <命令>
   tts                     逐句配音 + 时间轴
   preview [--only 3,5]    每章 3 帧拼图 + 对口型检查 + 静止段
-  check | still           只跑对口型检查 / 静止段
+  check [--only 3,5]      只跑对口型检查（不出拼图，几十秒）→ output/check.txt，第一行是硬伤数
+  still                   只跑静止段
   frames 章:句[:秒] …     单帧抽查拼图
-  render [resume] [--only 3,5] [--jobs N]   并行渲染（N 默认 CPU 核数，最多 8；也可设 STOCK_VIDEO_JOBS）
+  render [resume] [--only 3,5] [--jobs N] [--force]   并行渲染（N 默认 CPU 核数，最多 8；也可设 STOCK_VIDEO_JOBS）。
+                          渲染前自动 check：上次 check 之后改过就重跑，硬伤不为 0 拒绝渲染；--force 跳过（只用于确认是误报）
   mux                     混音 + 响度归一 → 成片 + .srt
   all                     tts → render → mux"""
 
@@ -1057,8 +1117,8 @@ def cli():
     if c in ('preview', 'render', 'all'): plan_gate()
     if c in ('tts', 'all'): cmd_tts()
     if c == 'preview': cmd_preview(only)
-    if c == 'check': cmd_check()
+    if c == 'check': cmd_check(only)
     if c == 'still': cmd_still()
     if c == 'frames': cmd_frames([x for x in a[1:] if ':' in x])
-    if c in ('render', 'all'): cmd_render(resume='resume' in a, only=only, jobs=jobs)
+    if c in ('render', 'all'): render_gate(only, force='--force' in a); cmd_render(resume='resume' in a, only=only, jobs=jobs)
     if c in ('mux', 'all'): cmd_mux()

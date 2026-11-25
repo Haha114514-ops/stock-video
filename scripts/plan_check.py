@@ -8,7 +8,7 @@
     - 触发词在旁白里找不到（video.py 里 B.at 会报错）
     - 两个触发点之间隔太久：按约 4.3 字/秒估，超过 STILL_MAX 秒（和 preview 的静止段同一条线，读 motion.py）
     - 红线：结尾没念免责、念了买卖建议 / 目标价口吻、讲参考价的那章画面列没写"非目标价"
-    - 未经审计的数第一次出现时，旁白还没说过"未经审计"
+    - 未经审计的数第一次出现时，旁白还没说过"未经审计"（没经过审计、尚未审计等同义说法都认）
     - 总览没填"公司一句话"，或"生意那一拍落在：第 N 章第 M 句"没填 / 指向不存在的句子（57号补丁十七）
     - 总览没写"三张表总览落在"三句，或指向不存在的句子；资产负债表总览从那句到本章末没写到"有什么""钱是谁的"两根柱（补丁二十五）
     - 总览没填"判断标准"（看哪个指标、参照谁、持平线和"不贵""便宜"两条线各多少倍）（补丁二十八）
@@ -38,6 +38,9 @@ PREMISE = r'推算|假设|如果|按.{0,12}算|年化'
 VERIFY = r'连续|首次|第一次|头一回|通常|一向|历来|向来|拐点|见底|触底|复苏|新高|新低'   # 先算再写（补丁二十八）
 COMPARE = r'比.{1,12}(多|少|高|低|快|慢)'
 EXTRAP = r'年化|照这个速度|推全年|全年(会|能|大概|可能)'
+CHEAP = r'便宜|(?<![宝珍富昂名])贵(?![州阳宾细金重])'
+# 不是估值意义上的"便宜 / 贵"：名贵、贵细（药材）、昂贵、便宜品种 / 便宜货、借钱变贵（利率）、疑问句"便宜吗？""贵不贵"
+NOT_CHEAP = r'名贵|贵细|昂贵|便宜(?:的)?(?:品种|货|产品|房子|药)|(?:借钱|融资|贷款|利息|资金|成本)\S{0,3}贵|便宜吗|贵吗|贵不贵|便不便宜|算不算便宜|是不是(?:真)?便宜'
 
 
 def clean(s):
@@ -170,7 +173,7 @@ def judge(md, chs, lines):
     if not m or len(clean(m.group(1))) < 6:
         must.append('总览的"判断标准"没填：照 故事.md 推理表下那一行写——看哪个指标、参照谁、为什么；先用参照的估值倍数反推"持平线"，再定"不贵""便宜"两条线，各对应多少倍（方法与口径 §2）')
     cheap = [f'{chs[si][0]}章{li + 1}句' for si, rows in enumerate(lines) for li, s in enumerate(rows)
-             if re.search(r'便宜|(?<![宝珍富昂])贵(?![州阳宾])', s)]
+             if re.search(CHEAP, re.sub(NOT_CHEAP, '', s))]
     if cheap:
         check.append(f'念到"便宜 / 不贵 / 贵"的 {len(cheap)} 句（{"、".join(cheap)}）：每句都是判断标准那个意思吗？只是某个倍数低就说"市净率低"，不说"便宜"')
     seasonal = '季节' in md
@@ -181,7 +184,7 @@ def judge(md, chs, lines):
             if w:
                 check.append(f'先算再写「{w.group()}」：{tag}——算过或材料里有原文吗')
             c = re.search(COMPARE, s)
-            if c and not R._nums(s):
+            if c and not list(R._nums(R.norm(s))):
                 check.append(f'"{c.group()}"没给数：{tag}——方向算过吗（多 / 少别写反）')
             if re.search(EXTRAP, s) and not seasonal:
                 check.append(f'{tag}在年化 / 推全年，方案里没提季节性：先看 facts.md「单季拆分」，有规律按往年分布推，没有写"看不出季节性"')
@@ -236,14 +239,17 @@ def main():
 
     # 未经审计：第一次念到标了"未经审计"的数时，前面（含这句）要说过
     labels = facts.get('labels', {})
-    unaud = {k for k, v in labels.items() if '未经审计' in str(v)}
+    unaud = {k for k, v in labels.items() if re.search(R.UNAUD, str(v))}
     if unaud:
         paths = R.flat_paths(facts); said = False; done = False
         for si, rows in enumerate(lines):
             for li, s in enumerate(rows):
-                said = said or '未经审计' in s
+                s = R.norm(s); said = said or bool(re.search(R.UNAUD, s))     # 没经过审计、尚未审计……都算说过
                 if done: continue
-                hit = [k for _, n in R._nums(s) for k in R.matches(n, paths) if k in unaud]
+                hit = []
+                for m, n in R._nums(s):                  # 数值 + 单位都对上、取上下文最近的键；最近的几个键都是未经审计的才算
+                    ks = R.matches(n, paths, labels, R.spoken_unit(s, m), s[max(0, m.start() - 24):m.end() + 6])
+                    if ks and all(k in unaud for k in ks): hit.append(ks[0])
                 if hit:
                     done = True
                     if not said:
@@ -253,7 +259,7 @@ def main():
     if facts:
         for si, li, n, s in R.numbers(lines, facts):
             check.append(f'数字不在 facts 里：第 {chs[si][0]} 章第 {li + 1} 句「{n}」')
-    for n, w in R.repeats(lines):
+    for n, w in R.repeats(lines, exempt=R.judge_vals(md)):        # 判断标准的线值要重复念，不报
         check.append(f'同一个数念了 {len(w)} 句：「{n}」→ ' + '、'.join(f'{chs[si][0]}章{li + 1}句' for si, li in w))
     for si, rows in enumerate(lines):
         for li, s in enumerate(rows):

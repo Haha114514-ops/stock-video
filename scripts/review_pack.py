@@ -70,12 +70,33 @@ def sheets(video, tl, names, out):
     return paths
 
 
-def freezes(video):
-    # 只量内容区（y 120~920），裁掉片头条、字幕和进度条：字幕一直在换，整帧量会把"只有章标题"的十几秒算成在动
+def freezes(video, tl=None, M=None):
+    """静止段 → [(全片起点秒, 时长, 章)]。和 preview 的 still.txt 同一个算法（motion.still_segs）：
+    按 STILL_STEP 秒取帧、只量内容区 y 120~920、灰度缩到 480×200，相邻两帧平均差 < STILL_N 连续 ≥ STILL_D 秒算一段，段不跨章。
+    区别只在帧的来源（这里取成片，preview 取分镜函数）。读不到 motion 时退回 ffmpeg freezedetect（只作参考，口径不同）"""
+    if M is not None and tl:
+        import numpy as np
+        fps = M.FPS; k = max(1, int(round(M.STILL_STEP * fps)))
+        vf = f"crop=iw:ih*800/1080:0:ih*120/1080,select=not(mod(n\\,{k})),scale=480:200:flags=bilinear,format=gray"
+        for sync in (('-fps_mode', 'passthrough'), ('-vsync', '0')):        # 新版 ffmpeg 去掉了 -vsync
+            r = subprocess.run(sysenv.ffmpeg('-v', 'error', '-i', video, '-an', '-vf', vf, *sync, '-f', 'rawvideo', '-'), capture_output=True)
+            if r.returncode == 0: break
+        fr = np.frombuffer(r.stdout, np.uint8)
+        if r.returncode == 0 and fr.size >= 480 * 200 * 2:
+            fr = fr[:fr.size // (480 * 200) * 480 * 200].reshape(-1, 200, 480).astype(np.float32) / 255
+            step = k / fps; out_ = []
+            for si, sc in enumerate(tl):
+                i0 = int(np.ceil(sc['off'] / step - 1e-6)); i1 = min(len(fr) - 1, int((sc['off'] + sc['T']) / step))
+                if i1 - i0 < 2: continue
+                ts = [i * step - sc['off'] for i in range(i0, i1 + 1)]
+                diffs = [float(np.abs(fr[i + 1] - fr[i]).mean()) for i in range(i0, i1)]
+                out_ += [(sc['off'] + a, b - a, si) for a, b in M.still_segs(ts, diffs)]
+            return out_
+        print('成片取帧失败，静止段退回 ffmpeg freezedetect（口径和 still.txt 不同，只作参考）')
     r = run(sysenv.ffmpeg('-v', 'info', '-i', video, '-vf', 'crop=iw:ih*800/1080:0:ih*120/1080,freezedetect=n=0.001:d=3', '-an', '-f', 'null', '-'))
     st = [float(x) for x in re.findall(r'freeze_start: ([\d.]+)', r.stderr)]
     du = [float(x) for x in re.findall(r'freeze_duration: ([\d.]+)', r.stderr)]
-    return list(zip(st, du))
+    return [(a, d, None) for a, d in zip(st, du)]
 
 
 def flat_numbers(o, acc):
@@ -88,14 +109,23 @@ def flat_numbers(o, acc):
     return acc
 
 
+def rnd(v, d):
+    """四舍五入到 d 位小数（Python 的 round 是银行家舍入：round(0.125, 2) = 0.12）"""
+    from decimal import Decimal, ROUND_HALF_UP
+    return float(Decimal(repr(float(v))).quantize(Decimal(1).scaleb(-d), ROUND_HALF_UP)) if d >= 0 else         float((Decimal(repr(float(v))) / Decimal(10) ** -d).quantize(Decimal(1), ROUND_HALF_UP) * Decimal(10) ** -d)
+
+
+def places(n):
+    """旁白数字写到第几位：小数位数；整数末尾的 0 算约数（"3300 亿"是约到百位，-2）"""
+    if '.' in n: return len(n.split('.')[1])
+    z = len(n) - len(n.rstrip('0'))
+    return -min(z, len(n) - 1) if len(n) >= 3 else 0
+
+
 def num_ok(s, vals):
-    """旁白里的数字 s（字符串）能否在 facts 里找到：按它写出的小数位四舍五入比较，也试 比例→百分数"""
-    d = len(s.split('.')[1]) if '.' in s else 0; x = float(s)
-    for v in vals:
-        for c in (v, v * 100):
-            if round(c, d) == x: return True
-            if d == 0 and abs(c - x) <= 0.5: return True
-    return False
+    """旁白里的数字 s（字符串）能否在 facts 里找到：按它写出的小数位四舍五入比较（6.7657 念 6.7 算错、念 6.77 / 6.8 算对），也试 比例→百分数"""
+    d = places(s); x = float(s)
+    return any(rnd(c, d) == x for v in vals for c in (v, v * 100))
 
 
 def flat_paths(o, pre='', acc=None):
@@ -106,27 +136,43 @@ def flat_paths(o, pre='', acc=None):
             if k in ('labels', 'quotes', 'series', 'price'): continue     # 说法本身、画图用的长序列不参与匹配
             flat_paths(v, f'{pre}.{k}' if pre else str(k), acc)
     elif isinstance(o, list):
+        if all(isinstance(v, (int, float)) or v is None for v in o): return acc     # 一串数是序列（画图用），不参与配对
         for i, v in enumerate(o): flat_paths(v, f'{pre}.{i}', acc)
     elif isinstance(o, (int, float)) and not isinstance(o, bool):
         acc.append((pre, float(o)))
     return acc
 
 
+def norm(s):
+    """千分位"1,200 万"当"1200万"：配对前先去掉数字中间的逗号（_nums 的位置都按去过逗号的字符串算）"""
+    return re.sub(r'(?<=\d)[,，](?=\d{3}(?!\d))', '', s)
+
+
 def _nums(s):
+    """旁白里当数字看的数（s 先过 norm）。不算：年份 / 坐标轴刻度（19xx、20xx）、月份日期（"9 月末""6 月底""2 月 25 日""6 号"，
+    数字和月 / 日之间可以有空格）"""
     for m in re.finditer(r'(?<![\d.])(\d+(?:\.\d+)?)(?![\d.])', s):
-        n = m.group(1); tail = s[m.end():m.end() + 2]
-        if re.fullmatch(r'(19|20)\d\d', n) or tail[:1] in ('月', '日', '号') or (tail[:1] == '年' and len(n) == 4):
+        n = m.group(1); tail = s[m.end():m.end() + 3].lstrip()[:1]
+        if re.fullmatch(r'(19|20)\d\d', n) or tail in ('日', '号') or (tail == '月' and '.' not in n and int(n) <= 12) \
+                or (tail == '年' and len(n) == 4):
             continue
         yield m, n
 
 
-def repeats(lines_by_scene, k=3):
-    """同一个数在 ≥k 句里念过（57号补丁一，接替观众审片"同一个数说了好几遍"）：一个数念一遍就够，结论只说一遍"""
+def judge_vals(md):
+    """文字方案总览"判断标准"那一行里的数（参照倍数、持平线、"不贵""便宜"两条线）：为了每季对表要重复念，不算"念了好几遍"。"""
+    m = re.search(r'^-\s*判断标准[^：:\n]*[：:][ \t]*(.*)$', md or '', re.M)
+    return {n for _, n in _nums(norm(m.group(1)))} if m else set()
+
+
+def repeats(lines_by_scene, k=3, exempt=()):
+    """同一个数在 ≥k 句里念过（57号补丁一，接替观众审片"同一个数说了好几遍"）：一个数念一遍就够，结论只说一遍。
+    同一句里念两次只算一句；exempt（判断标准的线值，见 judge_vals）不报"""
     seen = {}
     for si, lines in enumerate(lines_by_scene):
         for li, s in enumerate(lines):
-            for _, n in set(_nums(s)):
-                if len(n.replace('.', '')) < 2: continue          # 1、3 这类太常见
+            for n in {n for _, n in _nums(norm(s))}:
+                if len(n.replace('.', '')) < 2 or n in exempt: continue          # 1、3 这类太常见
                 seen.setdefault(n, []).append((si, li))
     return sorted([(n, w) for n, w in seen.items() if len(w) >= k], key=lambda x: -len(x[1]))
 
@@ -136,18 +182,52 @@ def numbers(lines_by_scene, facts):
     miss = []
     for si, lines in enumerate(lines_by_scene):
         for li, s in enumerate(lines):
-            for m, n in _nums(s):
+            for m, n in _nums(norm(s)):
                 if not num_ok(n, vals): miss.append((si, li, n, s))
     return miss
 
 
-def matches(n, paths):
-    """旁白数字 n 能对上的 facts 键（按写出的小数位比较，也试 比例→百分数、百万→亿 / 万）"""
-    d = len(n.split('.')[1]) if '.' in n else 0; x = float(n)
+UNIT = [('%', r'%|％|个百分点|百分点'), ('倍', r'倍'), ('亿', r'亿'), ('万', r'万(?!亿)'), ('元', r'(?<![亿万])元|块'),
+        ('天', r'天'), ('年', r'年'), ('个', r'[个家座间所人户套]')]
+
+
+def unit_of(s):
+    """一段字里出现的单位类（%、倍、亿、万、元、天、年、个）"""
+    return {u for u, p in UNIT if re.search(p, s or '')}
+
+
+def spoken_unit(s, m):
+    """旁白里这个数后面紧跟的单位类（"47.4%"→%，"0.31 倍"→倍，"931 亿"→亿；没有就空）"""
+    tail = s[m.end():m.end() + 4].lstrip()
+    for u, p in UNIT:
+        if re.match(p, tail): return u
+    return None
+
+
+def _grams(s):
+    c = re.sub(r'[^一-鿿A-Za-z]', '', s or '')
+    return {a + b for a, b in zip(c, c[1:])}
+
+
+def matches(n, paths, labels=None, unit=None, ctx=''):
+    """旁白数字 n 能对上的 facts 键：按写出的小数位四舍五入比较，也试 比例→百分数、百万→亿 / 万。
+    labels / unit / ctx 给了就收紧（撞值误报：小整数、碰巧同值的数会配上一串无关的键）：
+    - 数值 + 单位都对上才配：旁白念了单位、键的说法里也写了单位，两边不一致就不配；
+    - 多个候选时取说法和旁白上下文最近的（共有的两字词最多的）；都一样近就全留。"""
+    d = places(n); x = float(n)
     for scale in (1, 100, 0.01):                 # 先找原值对上的；没有再试 比例→百分数、百万→亿，避免 3.2% 撞上 3.16 亿
-        out = [p for p, v in paths if round(abs(v) * scale, d) == x and (d > 0 or x >= 10)]
-        if out: return out
-    return []
+        out = [p for p, v in paths if rnd(abs(v) * scale, d) == x and (d > 0 or x >= 10)]
+        if labels is not None and unit and out:
+            out = [p for p in out if not (unit_of(labels.get(p)) and unit not in unit_of(labels.get(p)))
+                   and not (scale == 100 and unit != '%')]
+        if out: break
+    else:
+        return []
+    if labels is not None and ctx and len(out) > 1:
+        g = _grams(ctx); sc = {p: len(g & _grams(labels.get(p, '') + ' ' + p.replace('.', ' '))) for p in out}
+        best = max(sc.values())
+        if best > 0: out = [p for p in out if sc[p] == best]
+    return out
 
 
 def label_table(lines_by_scene, facts):
@@ -156,16 +236,18 @@ def label_table(lines_by_scene, facts):
     paths = flat_paths(facts); labels = facts.get('labels', {}); rows = []
     for si, lines in enumerate(lines_by_scene):
         for li, s in enumerate(lines):
+            s = norm(s)
             for m, n in _nums(s):
-                ks = matches(n, paths)
-                if not ks: continue
                 ctx = s[max(0, m.start() - 16):m.start()] + n + s[m.end():m.end() + 3]     # 说法常在前一个逗号之前（"一年前，……6.71"）
+                ks = matches(n, paths, labels, spoken_unit(s, m), s[max(0, m.start() - 24):m.end() + 6])
+                if not ks: continue
                 ks = sorted(ks, key=lambda k: k not in labels)[:4]          # 有说法的排前面，但没说法的也列出来，免得错配
                 rows.append((si, li, ctx, '；'.join(f'{k} = {labels[k]}' if k in labels else f'{k}（无说法）' for k in ks)))
     return rows, bool(labels)
 
 
-BANNED = r'买入|卖出|加仓|减仓|抄底|满仓|清仓|目标价'
+BANNED = r'买入(?!价|成本|金额)|卖出(?!价|去|金额)|加仓|减仓|抄底|满仓|清仓|目标价'     # 买入价 / 卖出价 / 卖出去是会计和经营用语，不算
+UNAUD = r'未经(?:过)?审计|没(?:有)?经(?:过)?审计|尚未(?:经过?)?审计|未审计|未经审阅'          # "未经审计"的同义说法
 
 
 def still_max():
@@ -215,7 +297,7 @@ def main():
     facts = json.load(open(facts_p, encoding='utf-8')) if os.path.exists(facts_p) else {}
 
     print('抽帧…'); shp = sheets(video, sc, names, out)
-    print('静止段…'); fz = freezes(video)
+    print('静止段…'); fz = freezes(video, sc, M)
     miss = numbers(lines, facts) if facts else []
     lrows, has_labels = label_table(lines, facts) if facts else ([], False)
     try: chk = (['文字方案 ↔ video.py：' + x for x in M.check_plan()] + M.check_report(M.check_scenes())) if M else None
@@ -232,8 +314,8 @@ def main():
     L += ['## 念到的东西，画面上有没有；排版（叠压、重影、数字先于卡片、自动回指压暗没亮对）；文字方案每章都拼进来没有', '']
     L += [f'- {x}' for x in chk] if chk else ['- 无'] if chk is not None else ['- 没跑成（读不到 video.py）']
     L += ['', '## 静止段（内容区 3 秒以上不动；只有字幕在变也算不动）', '',
-          f'共 {len(fz)} 段，合计 {sum(d for _, d in fz):.0f} 秒，占全片 {sum(d for _, d in fz) / total * 100:.0f}%（只报数）。超过 {still_max():.0f} 秒的（必须补）：', '']
-    L += [f'- {mmss(s)}，{d:.1f} 秒，第 {chap(s):02d} 章 {names[chap(s)]}' for s, d in fz if d > still_max()] or ['- 无']
+          f'共 {len(fz)} 段，合计 {sum(d for _, d, _ in fz):.0f} 秒，占全片 {sum(d for _, d, _ in fz) / total * 100:.0f}%（只报数；和 preview 的 still.txt 同一算法）。超过 {still_max():.0f} 秒的（必须补）：', '']
+    L += [f'- {mmss(s)}，{d:.1f} 秒，第 {chap(s):02d} 章 {names[chap(s)]}' for s, d, _ in fz if d > still_max()] or ['- 无']
     try: vsrc = open(os.path.join(root, 'video.py'), encoding='utf-8').read()
     except Exception: vsrc = ''
     L += ['', '## 红线（免责、买卖建议口吻、参考价页"非目标价"；有就必须改）', '']
@@ -249,7 +331,9 @@ def main():
     L += ['', '## 推算句（前提念全了吗？和画面角注是不是同一句？结论有没有把片子自己的推算说成"如果发生"？）', '']
     L += [f'- 第 {si:02d} 章第 {li + 1} 句：{x}' for si in range(len(sc)) for li, x in enumerate(lines[si]) if re.search(CALC, x)] or ['- 无']
     L += ['', '## 同一个数念了好几遍（≥3 句；除了开场提问、结尾回答，其余能删就删）', '']
-    L += [f'- 「{n}」{len(w)} 次：' + '、'.join(f'{si:02d}章{li + 1}句' for si, li in w) for n, w in repeats(lines)] or ['- 无']
+    try: plan_md = open(os.path.join(root, '文字方案.md'), encoding='utf-8').read()
+    except Exception: plan_md = ''
+    L += [f'- 「{n}」{len(w)} 次：' + '、'.join(f'{si:02d}章{li + 1}句' for si, li in w) for n, w in repeats(lines, exempt=judge_vals(plan_md))] or ['- 无']
     L += ['', '## 自查问题（作者回答；57号补丁一起不再另起观众审片子代理）', '',
           '1. 只凭这部片写出：这家公司靠什么赚钱、收入几块各占多少、家底（现金、负债、现金流）怎么样；利润表、资产负债表、现金流量表各自最反常的那一项是什么、为什么（原因出自哪条附注或公告；没有反常项就写"无"）；现在怎么样、为什么会这样；管理层的话对不对得上；为什么是这个估值、是不是真便宜；什么情况下不成立；接下来看什么。哪句写不出来或写得含糊？',
           '2. 开场问的问题，结尾回答了吗？回答是数据撑得住的，还是硬给了一个答案？',

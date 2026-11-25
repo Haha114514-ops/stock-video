@@ -32,7 +32,7 @@ sys.path.insert(0, os.path.join(SKILL, 'scripts'))
 import numpy as np, pandas as pd
 import motion as M
 from motion import *          # 配色、Frame、缓动 pg/out/eo/eio、图表原语
-from components import *      # tile / vbars / line_chart / hline / val_panel / pct_stats / quote / xfade
+from components import *      # tile / vbars（负值、分组）/ bs_bars（资产负债表两根柱）/ line_chart / hline / val_panel / pct_stats / quote / xfade
 from fx import *              # count / fly / equation / split / drain / zoom / strike
 from fxplus import *          # camera / versus / timeline / focus / arrow / highlight / underline / waterfall / sankey / transition
 

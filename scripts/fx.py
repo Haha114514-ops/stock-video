@@ -26,7 +26,7 @@ def _bump(p):
 
 def count(f, t, t0, xy, v0, v1, fmt='{:.1f}', size=64, c0=GOLD, c1=GOLD, d=1.2, a=1.0, anchor='mm', ghost=True, show0=False):
     """数字从 v0 滚到 v1，颜色从 c0 渐到 c1；ghost=True 时滚动开始后，旧值缩小移到左边、带一个箭头，
-    表示"原来是这个数"（xy 是新值的中心，anchor 只支持 'mm'）。t < t0 时显示 v0；v0 是 0 时 t < t0 不画
+    表示"原来是这个数"（xy 是新值的中心，anchor 只支持 'mm'；v0 是 0 时不留旧值）。t < t0 时显示 v0；v0 是 0 时 t < t0 不画
     （观众会把 0 当真数；0 本身有意义时传 show0=True）。fmt 里的 {:g} 按终值的小数位滚，不露长小数。返回进度 p。"""
     if a <= 0.01 or (v0 == 0 and t < t0 and not show0): return 0.0
     for g_ in ('{:g}', '{:+g}'):                     # 57号补丁二十一：晨光滚动中露出"0.76058元"
@@ -35,7 +35,7 @@ def count(f, t, t0, xy, v0, v1, fmt='{:.1f}', size=64, c0=GOLD, c1=GOLD, d=1.2, 
             fmt = fmt.replace(g_, g_[:-2] + f'.{dc}f}}')
     p = eio(pg(t, t0, d)) if t >= t0 else 0.0
     v = lerp(v0, v1, p); s = size * (1 + 0.10 * _bump(p))
-    if ghost and p > 0:
+    if ghost and p > 0 and (v0 != 0 or show0):      # 从 0 起滚不留"0.0 亿 →"的旧值：0 不是"原来的数"，观众会当真
         g = min(1.0, p * 2); gs = int(size * 0.45); half = f.tw(fmt.format(v1), size, 'n') / 2
         gx = xy[0] - half - 40 - 30 * g
         f.text((gx, xy[1]), '→', int(gs * 0.9), SUB, a * 0.7 * g, 'r', 'rm')

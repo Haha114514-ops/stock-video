@@ -5,7 +5,7 @@
 | 文件 | 用途 |
 |---|---|
 | `motion.py` | 暗色个股片逐帧动画引擎：画布/缓动/图表原语/片头条/字幕/配音/铺底音乐/并行渲染/混音。用法见文件头注与 SKILL.md 第 4~5 步 |
-| `components.py` | 54号起：分镜常用组件 `tile / vbars / line_chart / year_labels / hline / val_panel / pct_stats / quote / xfade`，57号补丁十加 `legend`（小图例；红绿不表示涨跌时必加）。56号起另有 facts.py 用的 `put`（数和说法一起冻结到 facts.json 的 `labels`）、`window_1y`（近一年 = 截止日往回 365 天）。两期以上用到的部件再收进来；不收"空卡片占位框" |
+| `components.py` | 54号起：分镜常用组件 `tile / vbars / line_chart / year_labels / hline / val_panel / pct_stats / quote / xfade`，57号补丁十加 `legend`（小图例；红绿不表示涨跌时必加），补丁三十五加 `bs_bars`（资产负债表两根等高堆叠柱）、`vbars` 负值 / 分组、`val_panel` 的 `mode='vs'` / `cur_delay` / `fade`。56号起另有 facts.py 用的 `put`（数和说法一起冻结到 facts.json 的 `labels`）、`window_1y`（近一年 = 截止日往回 365 天）。两期以上用到的部件再收进来；不收"空卡片占位框" |
 | `fx.py` | 56号补丁一起：有含义的动效 `count`（数字变成另一个数）/ `fly`（数从图上飞进算式）/ `equation`（算式一项项拼出）/ `split`（一根条拆段、某段掉出去）/ `drain`（钱按年花掉）/ `zoom`（放大一小块）/ `strike`（划掉）。只新增、不改 motion.py，旧工程不受影响。用法看 `python api_ref.py` |
 | `fxplus.py` | 57号补丁十六：第二组工具，不规定用法——镜头推拉平移 `camera` / `cam_keys`、对比 `versus`（并排 / 对撞）、时间轴 `timeline`、强调 `focus`（元素本身提亮、其余可压暗）/ `highlight`（整段提亮）/ `arrow` / `underline`（补丁二十一起 `ring` 不再画手绘圈，效果同 `focus`）、瀑布图 `waterfall`、桑基图 `sankey`（可多列）、同一块画面的转场 `transition`（fade / wipe / slide / flip / iris / blinds）。镜头和推移只动内容、背景不动；画面上记下的字位置跟着换算，讲到谁亮谁、对口型检查照常 |
 | `review_pack.py` | 54号起：成片审片包 `python review_pack.py <工程> [--video x.mp4] [--out 目录]` → 每章按句精确抽帧拼图 + `审片包.md`（旁白、念到的东西画面上有没有、内容区静止段、数字对账、56号起：旁白数字 ↔ facts 说法对照、推断句、推算句、观众 / 口径两组审片问题）。给两个独立审片人用 |
